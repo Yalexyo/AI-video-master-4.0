@@ -1,0 +1,11 @@
+[server]
+runOnSave=false
+
+[global]
+disableWatchdogWarning=false
+
+[browser]
+serverAddress = "localhost"
+
+[runner]
+fastReruns=false
