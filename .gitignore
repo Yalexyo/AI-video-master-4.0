@@ -1,0 +1,127 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Logs
+logs/
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project specific
+data/cache/
+data/temp/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Distribution / packaging
+
+# 分析结果和临时文件
+data/processed/analysis/results/
+data/processed/subtitles/
+data/exports/
+
+# 敏感文件和密钥
+docs/AccessKey.csv
+docs/*Key*.csv
+docs/*Secret*.csv
+**/credentials.json
+**/*secret*.json
+**/*token*.json
+.env
+src/config/oss_config.ini
+
+# 忽略大型视频文件
+data/test_samples/input/video/*.mp4
+data/test_samples/input/video/*.mov
+data/test_samples/input/video/*.MOV
+data/input/*.mp4
+data/models/
+
+# 忽略特定大文件
+data/models/sentence_transformers/**
+data/models/**/*.bin
+data/models/**/*.dylib
+data/models/**/*.so
+data/models/**/*blo*
+
+# 忽略音频文件
+data/cache/audio/
+data/temp/
+data/cache/
+
+# 忽略输出文件
+data/output/subtitles/
+data/output/segments/
+
+# 更多排除规则
+.venv/
+.venv/**/*
+.git/objects/pack/*.pack
+**/sentence_transformers/models--*/**
+**/pytorch_model.bin
+**/*.dylib
+**/*.so
+data/uploads/**
+data/test_samples/**/*.mp4
+data/test_samples/**/*.mov
+data/test_samples/**/*.MOV
+data/test_samples/**/*.avi
+data/test_samples/**/*.mkv
+data/test_samples/**/*.webm
+
+# 忽略segments文件夹下所有内容
+data/processed/segments/
+data/processed/segments/**/*
+data/output/test_videos/*.srt
+
+# 完全排除模型文件
+models/
+models/**/*
