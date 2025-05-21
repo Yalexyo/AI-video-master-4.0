@@ -3,6 +3,18 @@ import os
 import sys
 from pathlib import Path
 import logging # 添加logging导入
+import shutil # 添加shutil导入
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # 输出到控制台
+        logging.FileHandler(os.path.join('logs', 'app.log'))  # 输出到文件
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # 添加项目根目录到Python路径
 ROOT_DIR = Path(__file__).parent.parent
@@ -12,6 +24,8 @@ sys.path.append(str(ROOT_DIR))
 from streamlit_app.config.config import get_config, TARGET_GROUPS, SELLING_POINTS, PRODUCT_TYPES, SEMANTIC_SEGMENT_TYPES, SEMANTIC_MODULES
 from streamlit_app.modules.data_loader.video_loader import find_videos
 from streamlit_app.modules.analysis.intent_analyzer import main_analysis_pipeline, SemanticAnalyzer
+# 添加视频组织器模块的导入
+from streamlit_app.modules.data_process.video_organizer import organize_segments_by_type
 
 # --- 页面配置 ---
 st.set_page_config(
@@ -111,7 +125,6 @@ if 'selected_selling_points' not in st.session_state:
 app_config = get_config()
 # 初始化 SemanticAnalyzer 单例
 sa_analyzer = SemanticAnalyzer()
-logger = logging.getLogger(__name__) # 初始化logger
 
 # --- 设置默认视频目录 ---
 DEFAULT_VIDEO_DIR = os.path.join(ROOT_DIR, "data/input/test_videos")
@@ -323,6 +336,20 @@ if analyze_button and st.session_state.video_files:
         
         if not st.session_state.all_videos_analysis_data:
             st.warning("所有视频均分析完成，但未获得任何有效结果。")
+        
+        # 分析完成后，调用函数按语义类型组织视频片段
+        try:
+            logger.info("开始调用 organize_segments_by_type() 函数组织视频片段...")
+            success = organize_segments_by_type()
+            if success:
+                st.success("已按语义类型组织视频片段到data/output目录")
+                logger.info("视频片段已成功按语义类型组织")
+            else:
+                st.warning("视频片段组织过程中遇到问题，请查看日志了解详情")
+                logger.warning("视频片段组织失败")
+        except Exception as e:
+            st.error(f"组织视频片段时出错: {str(e)}")
+            logger.error(f"调用 organize_segments_by_type() 函数出错: {str(e)}", exc_info=True)
 
 # 创建结果显示容器
 results_container = st.container()

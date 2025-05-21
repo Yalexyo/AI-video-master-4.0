@@ -1,5 +1,6 @@
 [server]
 runOnSave=false
+maxUploadSize=500
 
 [global]
 disableWatchdogWarning=false

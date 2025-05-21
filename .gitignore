@@ -125,3 +125,6 @@ data/output/test_videos/*.srt
 # 完全排除模型文件
 models/
 models/**/*
+
+# 忽略测试视频输入
+data/input/test_videos/
