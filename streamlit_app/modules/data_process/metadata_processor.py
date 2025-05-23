@@ -49,6 +49,10 @@ def save_detailed_segments_metadata(all_videos_analysis_data, root_dir, logger):
         # 修正：确保从 video_data 中获取产品类型时使用 "product_types" 键
         llm_analyzed_product_types = video_data.get("product_types", []) # 默认为空列表
         product_types_str = ", ".join(llm_analyzed_product_types) if llm_analyzed_product_types else "未知"
+        
+        # 新增：获取目标人群信息
+        llm_analyzed_target_audiences = video_data.get("target_audiences", []) # 默认为空列表  
+        target_audiences_str = ", ".join(llm_analyzed_target_audiences) if llm_analyzed_target_audiences else "未知"
 
         if not semantic_segments:
             logger.debug(f"视频 {original_video_id} 没有语义分段信息，跳过元数据保存。")
@@ -83,7 +87,8 @@ def save_detailed_segments_metadata(all_videos_analysis_data, root_dir, logger):
                     # 保留 start_time_ms 和 end_time_ms 以便 SRT 生成更精确
                     "start_time_ms": start_time_ms,
                     "end_time_ms": end_time_ms,
-                    "product_types": product_types_str # 新增产品类型字段
+                    "product_types": product_types_str, # 新增产品类型字段
+                    "target_audiences": target_audiences_str # 新增目标人群字段
                 })
     
     if not current_run_segments_metadata:
@@ -265,12 +270,13 @@ def create_srt_files_for_segments(root_dir, logger):
             srt_start_time = "00:00:00,000"
             srt_end_time = _seconds_to_srt_time_format(segment_duration_seconds)
 
-            srt_content = f"1\\n{srt_start_time} --> {srt_end_time}\\n{transcript_text}\\n\\n"
+            srt_content = f"1\n{srt_start_time} --> {srt_end_time}\n{transcript_text}\n\n"
 
             # 构建SRT文件的目标路径
             # 旧路径: srt_parent_dir = transcripts_base_dir / semantic_type / original_video_id
-            # 新路径: srt_parent_dir 直接在 output_dir 下构建
-            srt_parent_dir = output_dir / semantic_type / original_video_id
+            # 新路径: srt_parent_dir 直接在 output_dir 下构建，并且SRT文件与MP4文件同级，都在 {semantic_type} 文件夹下
+            # 因此 srt_parent_dir 应该是 output_dir / semantic_type
+            srt_parent_dir = output_dir / semantic_type # 修正：移除 original_video_id 这一层
             srt_parent_dir.mkdir(parents=True, exist_ok=True)
 
             srt_filename = Path(segment_filename).stem + ".srt"
@@ -289,6 +295,83 @@ def create_srt_files_for_segments(root_dir, logger):
         logger.info(f"SRT 文件生成完成。共创建 {srt_files_created_count} 个 SRT 文件。")
     else:
         logger.info("没有新的 SRT 文件被创建（可能元数据为空或已处理）。")
+
+def update_metadata_with_analysis_results(analyzed_segments, root_dir, logger):
+    """
+    更新元数据文件，添加片段分析结果（产品类型和核心卖点）
+    
+    Args:
+        analyzed_segments (list): 包含分析结果的片段列表
+        root_dir (str): 项目根目录
+        logger: 日志记录器
+    """
+    if not analyzed_segments:
+        logger.info("没有分析结果需要保存到元数据中。")
+        return False
+    
+    output_root_dir = os.path.join(root_dir, "data", "output")
+    metadata_file_path = os.path.join(output_root_dir, "video_segments_metadata.json")
+    
+    # 加载现有元数据
+    existing_metadata = []
+    if os.path.exists(metadata_file_path):
+        try:
+            with open(metadata_file_path, 'r', encoding='utf-8') as f:
+                existing_metadata = json.load(f)
+        except Exception as e:
+            logger.error(f"加载现有元数据失败: {e}")
+            return False
+    
+    if not existing_metadata:
+        logger.warning("没有找到现有元数据，无法更新分析结果。")
+        return False
+    
+    # 创建分析结果的查找字典，使用视频ID+开始时间+结束时间作为键
+    analysis_lookup = {}
+    for segment in analyzed_segments:
+        video_id = segment.get("video_id", "")
+        start_time = segment.get("start_time", 0)
+        end_time = segment.get("end_time", 0)
+        key = f"{video_id}_{start_time}_{end_time}"
+        analysis_lookup[key] = {
+            "analyzed_product_type": segment.get("analyzed_product_type", ""),
+            "analyzed_selling_points": segment.get("analyzed_selling_points", [])
+        }
+    
+    # 更新元数据
+    updated_count = 0
+    for metadata_item in existing_metadata:
+        # 从文件名中尝试提取视频ID和时间信息
+        filename = metadata_item.get("filename", "")
+        original_video_id = metadata_item.get("original_video_id", "")
+        
+        # 从元数据中获取毫秒时间并转换为秒
+        start_time_ms = metadata_item.get("start_time_ms")
+        end_time_ms = metadata_item.get("end_time_ms")
+        
+        if start_time_ms is not None and end_time_ms is not None:
+            start_time_seconds = start_time_ms / 1000.0
+            end_time_seconds = end_time_ms / 1000.0
+            
+            # 构建查找键
+            lookup_key = f"{original_video_id}_{start_time_seconds}_{end_time_seconds}"
+            
+            # 如果找到匹配的分析结果，更新元数据
+            if lookup_key in analysis_lookup:
+                analysis_result = analysis_lookup[lookup_key]
+                metadata_item["analyzed_product_type"] = analysis_result["analyzed_product_type"]
+                metadata_item["analyzed_selling_points"] = analysis_result["analyzed_selling_points"]
+                updated_count += 1
+    
+    # 保存更新后的元数据
+    try:
+        with open(metadata_file_path, 'w', encoding='utf-8') as f:
+            json.dump(existing_metadata, f, ensure_ascii=False, indent=4)
+        logger.info(f"已更新 {updated_count} 个片段的分析结果到元数据文件。")
+        return True
+    except Exception as e:
+        logger.error(f"保存更新后的元数据失败: {e}")
+        return False
 
 # Example usage (for testing, not to be run directly usually)
 if __name__ == '__main__':

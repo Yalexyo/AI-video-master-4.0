@@ -28,9 +28,11 @@ from streamlit_app.modules.analysis.intent_analyzer import main_analysis_pipelin
 # 添加视频组织器模块的导入
 from streamlit_app.modules.data_process.video_organizer import organize_segments_by_type
 # 新增：导入元数据处理器
-from streamlit_app.modules.data_process.metadata_processor import save_detailed_segments_metadata, create_srt_files_for_segments
+from streamlit_app.modules.data_process.metadata_processor import save_detailed_segments_metadata, create_srt_files_for_segments, update_metadata_with_analysis_results
 # 新增：导入结果展示界面函数
 from streamlit_app.modules.visualization.result_display import display_results_interface
+# 新增：导入片段分析器
+from streamlit_app.modules.analysis.segment_analyzer import analyze_segments_batch
 
 # --- 页面配置 ---
 st.set_page_config(
@@ -109,11 +111,35 @@ st.markdown("""
         color: black; /* 黑色文字 */
         border: 1px solid black; /* 黑色边框 */
     }
-
-    /* 所有自定义按钮的CSS规则均被移除 */
-
-</style>
-""", unsafe_allow_html=True)
+    
+    /* 目标人群标签样式 */
+    .tag-孕期妈妈 {
+        background-color: #E91E63; /* 粉红色 */
+    }
+    .tag-二胎妈妈 {
+        background-color: #FF9800; /* 橙色 */
+    }
+    .tag-混养妈妈 {
+        background-color: #4CAF50; /* 绿色 */
+    }
+    .tag-新手爸妈 {
+        background-color: #2196F3; /* 蓝色 */
+    }
+    .tag-贵妇妈妈 {
+        background-color: #9C27B0; /* 紫色 */
+    }
+    
+    /* 产品类型标签样式 */
+    .tag-启赋水奶 {
+        background-color: #4CAF50; /* 绿色 */
+    }
+    .tag-启赋蕴淳 {
+        background-color: #2196F3; /* 蓝色 */
+    }
+    .tag-启赋蓝钻 {
+        background-color: #9C27B0; /* 紫色 */
+    }
+</style>""", unsafe_allow_html=True)
 
 # --- 应用状态初始化 ---
 if 'uploaded_file_path' not in st.session_state:
@@ -346,20 +372,101 @@ if analyze_button and st.session_state.video_files:
             st.error(f"组织视频片段时出错: {str(e)}")
             logger.error(f"调用 organize_segments_by_type() 函数出错: {str(e)}", exc_info=True)
 
-        # --- 调用新的元数据保存函数 ---
-        # if st.session_state.get('all_videos_analysis_data'): # 这段逻辑似乎重复了，且位置不太对，先注释掉以避免混淆
-        #     try:
-        #         save_detailed_segments_metadata(st.session_state.all_videos_analysis_data, ROOT_DIR, logger)
-        #     except Exception as e_save_meta:
-        #         logger.error(f"调用 save_detailed_segments_metadata 失败: {e_save_meta}", exc_info=True)
-        #         st.error(f"保存分析结果元数据时发生错误: {e_save_meta}")
-
         # --- 确保在分析流程的末尾正确保存元数据和生成SRT ---
         if analyze_button and st.session_state.video_files: # 确保这些操作在分析完成后执行
             if st.session_state.all_videos_analysis_data:
                 logger.info("准备（再次确认）保存所有视频片段的详细元数据...")
                 if save_detailed_segments_metadata(st.session_state.all_videos_analysis_data, ROOT_DIR, logger):
                     logger.info("详细片段元数据（再次确认）保存成功。")
+                    
+                    # --- 新增：片段分析功能 ---
+                    st.subheader("🔍 智能分析片段内容")
+                    with st.spinner("正在分析各片段的产品类型和核心卖点..."):
+                        try:
+                            # 收集所有片段数据
+                            all_segments_for_analysis = []
+                            for video_data in st.session_state.all_videos_analysis_data:
+                                for semantic_type, segments in video_data.get("semantic_segments", {}).items():
+                                    for segment in segments:
+                                        # 准备片段数据用于分析
+                                        segment_for_analysis = {
+                                            "text": segment.get("text", ""),
+                                            "transcript": segment.get("asr_matched_text", ""),
+                                            "semantic_type": segment.get("semantic_type", semantic_type),
+                                            "video_id": video_data.get("video_id", ""),
+                                            "start_time": segment.get("start_time", 0),
+                                            "end_time": segment.get("end_time", 0)
+                                        }
+                                        all_segments_for_analysis.append(segment_for_analysis)
+                            
+                            if all_segments_for_analysis:
+                                logger.info(f"开始分析 {len(all_segments_for_analysis)} 个片段...")
+                                
+                                # 使用缓存键避免重复分析
+                                segments_cache_key = f"segments_analysis_{len(all_segments_for_analysis)}_{hash(str(all_segments_for_analysis[:3]))}"
+                                
+                                # 执行并行分析
+                                analyzed_segments = analyze_segments_batch(all_segments_for_analysis, max_workers=3)
+                                
+                                # 统计分析结果
+                                product_types_found = {}
+                                selling_points_found = {}
+                                
+                                for segment in analyzed_segments:
+                                    product_type = segment.get("analyzed_product_type", "")
+                                    selling_points = segment.get("analyzed_selling_points", [])
+                                    
+                                    if product_type:
+                                        product_types_found[product_type] = product_types_found.get(product_type, 0) + 1
+                                    
+                                    for sp in selling_points:
+                                        selling_points_found[sp] = selling_points_found.get(sp, 0) + 1
+                                
+                                # 显示分析结果统计
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.write("**识别到的产品类型:**")
+                                    if product_types_found:
+                                        for pt, count in product_types_found.items():
+                                            st.write(f"- {pt}: {count} 个片段")
+                                    else:
+                                        st.write("未识别到明确的产品类型")
+                                
+                                with col2:
+                                    st.write("**识别到的核心卖点:**")
+                                    if selling_points_found:
+                                        for sp, count in selling_points_found.items():
+                                            st.write(f"- {sp}: {count} 个片段")
+                                    else:
+                                        st.write("未识别到明确的核心卖点")
+                                
+                                logger.info(f"片段分析完成。产品类型: {list(product_types_found.keys())}，卖点: {list(selling_points_found.keys())}")
+                                st.success(f"✅ 已完成 {len(analyzed_segments)} 个片段的智能分析")
+                                
+                                # 将分析结果保存到元数据文件
+                                try:
+                                    logger.info("开始将片段分析结果保存到元数据文件...")
+                                    if update_metadata_with_analysis_results(analyzed_segments, ROOT_DIR, logger):
+                                        logger.info("片段分析结果已成功保存到元数据文件。")
+                                        st.success("🔖 分析结果已保存到元数据")
+                                    else:
+                                        logger.warning("保存片段分析结果到元数据文件失败。")
+                                        st.warning("⚠️ 分析结果保存失败")
+                                except Exception as e_save_analysis:
+                                    logger.error(f"保存片段分析结果时出错: {str(e_save_analysis)}")
+                                    st.error(f"保存分析结果失败: {str(e_save_analysis)}")
+                                
+                                # 将分析结果合并回原始数据结构
+                                # TODO: 这里可以扩展将分析结果保存到元数据文件中
+                                
+                            else:
+                                st.info("没有找到可分析的片段数据")
+                                
+                        except Exception as e_segment_analysis:
+                            logger.error(f"片段分析过程中出错: {str(e_segment_analysis)}")
+                            st.error(f"片段分析失败: {str(e_segment_analysis)}")
+                    
                     logger.info("准备（再次确认）为所有片段生成SRT字幕文件...")
                     create_srt_files_for_segments(ROOT_DIR, logger)
                     logger.info("SRT字幕文件（再次确认）生成流程调用完毕。")

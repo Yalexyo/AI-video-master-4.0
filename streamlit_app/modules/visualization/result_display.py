@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 import json # 新增导入
 
-from streamlit_app.config.config import SEMANTIC_SEGMENT_TYPES, get_paths_config
+from streamlit_app.config.config import SEMANTIC_SEGMENT_TYPES, get_paths_config, TARGET_GROUPS # 修改导入：TARGET_GROUPS 替代 PRODUCT_TYPES
 
 # 获取项目根目录和数据目录的配置
 paths_config = get_paths_config()
@@ -66,7 +66,13 @@ def get_all_segments_data():
                         time_info = metadata.get("time_info", "时间未知")
                         transcript_text = metadata.get("transcript", "转录待获取...")
                         original_video_id = metadata.get("original_video_id", "N/A")
-                        product_types = metadata.get("product_types", "未分析") # 新增：获取产品类型
+                        product_types = metadata.get("product_types", "未分析") # 获取产品类型
+                        target_audiences = metadata.get("target_audiences", "未分析") # 新增：获取目标人群
+                        start_time_ms = metadata.get("start_time_ms") # 获取开始毫秒数
+                        end_time_ms = metadata.get("end_time_ms")     # 获取结束毫秒数
+                        # 新增：获取分析结果字段
+                        analyzed_product_type = metadata.get("analyzed_product_type", "")
+                        analyzed_selling_points = metadata.get("analyzed_selling_points", [])
                         
                         segment_info = {
                             "type": semantic_type, # 或者 metadata.get("type")，应该是一致的
@@ -75,7 +81,13 @@ def get_all_segments_data():
                             "original_video_id": original_video_id,
                             "time_info": time_info,
                             "transcript": transcript_text,
-                            "product_types": product_types # 新增
+                            "product_types": product_types, # 保留产品类型字段
+                            "target_audiences": target_audiences, # 新增目标人群字段
+                            "start_time_ms": start_time_ms,
+                            "end_time_ms": end_time_ms,
+                            # 新增：添加分析结果字段
+                            "analyzed_product_type": analyzed_product_type,
+                            "analyzed_selling_points": analyzed_selling_points
                         }
                         all_segments.append(segment_info)
                     else:
@@ -93,6 +105,13 @@ def get_all_segments_data():
                             "original_video_id": original_video_id_placeholder,
                             "time_info": time_info_placeholder,
                             "transcript": transcript_placeholder,
+                            "product_types": "N/A", # 确保占位符也有此字段
+                            "target_audiences": "N/A", # 确保占位符也有此字段
+                            "start_time_ms": None,  # 占位符也应包含新字段
+                            "end_time_ms": None,     # 占位符也应包含新字段
+                            # 新增：为占位符添加分析结果字段
+                            "analyzed_product_type": "",
+                            "analyzed_selling_points": []
                         }
                         all_segments.append(segment_info_placeholder)
     
@@ -122,77 +141,133 @@ def open_folder_in_file_explorer(folder_path: str):
 def display_results_interface(analysis_results=None):
     """
     主函数，用于在 Streamlit 页面上渲染分析结果界面。
-
-    Args:
-        analysis_results: 分析流程传递过来的结果数据，可能包含转录、时间等详细信息。
-                         目前暂时未使用，后续用于填充转录和精确时间。
     """
-    # st.header("📊 分析结果可视化")
-
     segments_data = get_all_segments_data()
 
     if not segments_data:
         st.info("没有找到可显示的视频片段。请先执行分析。")
         return
 
-    # 1. 语义类型筛选按钮
-    st.subheader("按语义类型筛选")
+    # --- 初始化会话状态 ---
+    if 'selected_target_audience_filter' not in st.session_state:
+        st.session_state.selected_target_audience_filter = "全部目标人群" # 默认目标人群筛选
+    if 'selected_segment_filter' not in st.session_state:
+        st.session_state.selected_segment_filter = "显示全部" # 默认语义类型筛选
+    if 'time_sort_order' not in st.session_state:
+        st.session_state.time_sort_order = None
+
+    # --- 第一层筛选：按目标人群 ---    
+    st.subheader("按目标人群筛选")
+    target_audience_cols_per_row = 5 
+    ta_filter_buttons_cols = st.columns(target_audience_cols_per_row)
     
-    # 创建列用于筛选按钮，"显示全部" + 各个语义类型
-    # 每行最多放 5 个筛选器（4个类型 + 1个可能的占位或下一个）
+    current_target_audience_filter = st.session_state.selected_target_audience_filter
+
+    # "全部目标人群" 按钮
+    if ta_filter_buttons_cols[0].button("全部目标人群", 
+                                        key="target_audience_all_btn", 
+                                        use_container_width=True, 
+                                        type="primary" if current_target_audience_filter == "全部目标人群" else "secondary"):
+        st.session_state.selected_target_audience_filter = "全部目标人群"
+        st.rerun()
+
+    ta_col_idx = 1
+    for ta_type in TARGET_GROUPS: # 使用配置中的 TARGET_GROUPS
+        if ta_col_idx >= target_audience_cols_per_row:
+            ta_filter_buttons_cols = st.columns(target_audience_cols_per_row)
+            ta_col_idx = 0
+        
+        if ta_filter_buttons_cols[ta_col_idx].button(ta_type, 
+                                                    key=f"target_audience_{ta_type}_btn", 
+                                                    use_container_width=True, 
+                                                    type="primary" if current_target_audience_filter == ta_type else "secondary"):
+            st.session_state.selected_target_audience_filter = ta_type
+            st.rerun()
+        ta_col_idx += 1
+
+    # 应用目标人群筛选
+    segments_after_target_audience_filter = []
+    if current_target_audience_filter == "全部目标人群":
+        segments_after_target_audience_filter = segments_data
+    else:
+        for segment in segments_data:
+            # target_audiences 在元数据中是逗号分隔的字符串，或者列表
+            # 确保能正确处理 "未知" 或 "N/A" 等情况
+            segment_ta_str = segment.get("target_audiences", "")
+            if isinstance(segment_ta_str, str):
+                 # 假设 target_audiences 是逗号分隔的字符串，例如 "孕期妈妈, 新手爸妈"
+                if current_target_audience_filter in [s.strip() for s in segment_ta_str.split(',')]:
+                    segments_after_target_audience_filter.append(segment)
+            elif isinstance(segment_ta_str, list): # 如果已经是列表
+                if current_target_audience_filter in segment_ta_str:
+                    segments_after_target_audience_filter.append(segment)
+    
+    if not segments_after_target_audience_filter:
+        st.info(f"在目标人群 '{current_target_audience_filter}' 下没有找到片段。")
+        # return # 不直接返回，允许用户更改语义类型筛选
+
+    st.markdown("---", help="Semantic type filter below") # 分隔线
+
+    # --- 第二层筛选：按语义类型 (基于上一层筛选结果) ---
+    st.subheader("按语义类型筛选")
     cols_per_row = 5 
     filter_buttons_cols = st.columns(cols_per_row)
     
-    selected_filter = st.session_state.get('selected_segment_filter', "显示全部")
+    current_semantic_filter = st.session_state.selected_segment_filter
 
-    if filter_buttons_cols[0].button("显示全部", use_container_width=True, type="primary" if selected_filter == "显示全部" else "secondary"):
-        selected_filter = "显示全部"
+    if filter_buttons_cols[0].button("显示全部", 
+                                     key="sem_type_all_btn", 
+                                     use_container_width=True, 
+                                     type="primary" if current_semantic_filter == "显示全部" else "secondary"):
         st.session_state.selected_segment_filter = "显示全部"
-        st.rerun() # 重新运行以应用筛选
+        st.rerun() 
 
     col_idx = 1
     for seg_type in SEMANTIC_SEGMENT_TYPES:
-        if col_idx >= cols_per_row: # 简单处理换行逻辑，实际可能需要更复杂的布局
+        if col_idx >= cols_per_row: 
             filter_buttons_cols = st.columns(cols_per_row)
             col_idx = 0
         
-        if filter_buttons_cols[col_idx].button(seg_type, use_container_width=True, type="primary" if selected_filter == seg_type else "secondary"):
-            selected_filter = seg_type
+        if filter_buttons_cols[col_idx].button(seg_type, 
+                                              key=f"sem_type_{seg_type}_btn", 
+                                              use_container_width=True, 
+                                              type="primary" if current_semantic_filter == seg_type else "secondary"):
             st.session_state.selected_segment_filter = seg_type
-            st.rerun() # 重新运行以应用筛选
+            st.rerun() 
         col_idx += 1
     
-    # 筛选数据
-    if selected_filter == "显示全部":
-        filtered_segments = segments_data
+    # 应用语义类型筛选 (作用于已被目标人群筛选过的数据)
+    filtered_segments = []
+    if current_semantic_filter == "显示全部":
+        filtered_segments = segments_after_target_audience_filter
     else:
-        filtered_segments = [s for s in segments_data if s["type"] == selected_filter]
+        filtered_segments = [s for s in segments_after_target_audience_filter if s["type"] == current_semantic_filter]
 
     if not filtered_segments:
-        st.info(f"没有找到类型为 '{selected_filter}' 的视频片段。")
+        st.info(f"在目标人群 '{current_target_audience_filter}' 和语义类型 '{current_semantic_filter}' 下没有找到视频片段。")
         return
         
-    # 2. 视频片段列表
-    # st.subheader("视频片段列表")
-
-    # 为表格准备数据
-    display_data = []
-    for idx, segment in enumerate(filtered_segments):
-        display_data.append({
-            "片段ID": f"{segment['original_video_id']}_{segment['filename']}", # 确保唯一性
-            "路径": str(segment['path']),
-            "时间": segment['time_info'],
-            "转录": segment['transcript'],
-        })
+    # 时长排序逻辑 (作用于最终筛选结果)
+    def get_duration_ms(segment):
+        """计算片段时长（毫秒）"""
+        start_ms = segment.get('start_time_ms')
+        end_ms = segment.get('end_time_ms')
+        if start_ms is not None and end_ms is not None:
+            try:
+                return float(end_ms) - float(start_ms)
+            except (ValueError, TypeError):
+                return float('inf')  # 如果计算出错，放到最后
+        return float('inf')  # 如果数据缺失，放到最后
     
-    df = pd.DataFrame(display_data)
-
-    if df.empty:
-        st.info("没有可显示的片段数据。")
-        return
+    if st.session_state.time_sort_order == 'asc':
+        # 升序：时长从小到大
+        filtered_segments.sort(key=get_duration_ms)
+    elif st.session_state.time_sort_order == 'desc':
+        # 降序：时长从大到小
+        filtered_segments.sort(key=get_duration_ms, reverse=True)
 
     # 定义列权重，用于按钮、表头和行数据，以确保对齐
-    list_column_weights = [1.5, 1, 2, 1]  # 路径, 时间, 转录, 视频类型
+    list_column_weights = [1.2, 1.0, 0.6, 1.8, 1.2, 1.2]  # 视频ID, 时间, 时长, 转录, 产品类型, 核心卖点
 
     # --- "打开目录" Button (置于路径列头之上) ---
     button_row_cols = st.columns(list_column_weights)
@@ -221,42 +296,103 @@ def display_results_interface(analysis_results=None):
     header_display_cols = st.columns(list_column_weights)
     header_display_cols[0].markdown("**视频ID**")
     header_display_cols[1].markdown("**时间**")
-    header_display_cols[2].markdown("**转录**")
-    header_display_cols[3].markdown("**视频类型**")
+
+    # Duration header with sort selectbox - moved from time column for better UX
+    with header_display_cols[2]:
+        # 根据当前排序状态确定selectbox的默认选项
+        current_sort = st.session_state.time_sort_order
+        if current_sort is None:
+            default_index = 0  # "⚪️ 不排序"
+        elif current_sort == 'asc':
+            default_index = 1  # "⬆️ 升序"
+        else:  # 'desc'
+            default_index = 2  # "⬇️ 降序"
+        
+        sort_option = st.selectbox(
+            "时长排序",
+            options=["⚪️ 不排序", "⬆️ 升序", "⬇️ 降序"],
+            index=default_index,
+            label_visibility="collapsed",
+            key="time_sort_selectbox"
+        )
+        
+        # 根据selectbox的选择更新session_state
+        if sort_option == "⚪️ 不排序":
+            new_sort_order = None
+        elif sort_option == "⬆️ 升序":
+            new_sort_order = 'asc'
+        else:  # "⬇️ 降序"
+            new_sort_order = 'desc'
+        
+        # 如果排序状态发生变化，更新并重新运行
+        if st.session_state.time_sort_order != new_sort_order:
+            st.session_state.time_sort_order = new_sort_order
+            st.rerun()
+
+    header_display_cols[3].markdown("**转录**")
+    header_display_cols[4].markdown("**产品类型**")
+    header_display_cols[5].markdown("**核心卖点**")
+
     st.divider()
 
     for index, row_data in enumerate(filtered_segments): # Iterate over original segment data
-        # r_col_path_id, r_col_button_spacer, r_col_time, r_col_transcript, r_col_type = st.columns([1.5, 0.9, 1, 2, 1]) # Match header column structure
         data_row_cols = st.columns(list_column_weights) # 使用与表头相同的列权重
         
-        # 路径 - 显示 {视频ID名称}
+        # 视频ID - 显示 {视频ID名称}
         data_row_cols[0].markdown(f"**{{{row_data['original_video_id']}}}**")
         
         # 时间
         data_row_cols[1].write(row_data['time_info'])
+
+        # 时长
+        start_ms = row_data.get("start_time_ms")
+        end_ms = row_data.get("end_time_ms")
+        duration_str = "N/A"
+        if start_ms is not None and end_ms is not None:
+            try:
+                duration_seconds = (float(end_ms) - float(start_ms)) / 1000.0
+                duration_str = f"{duration_seconds:.2f} s" # 保留两位小数
+            except (ValueError, TypeError):
+                duration_str = "计算错误"
+        data_row_cols[2].write(duration_str)
         
         # 转录
-        data_row_cols[2].text_area(
+        data_row_cols[3].text_area(
             label=f"transcript_{index}_{row_data['filename']}",
             value=row_data['transcript'], 
             height=100, 
             label_visibility='collapsed'
         )
         
-        # 视频类型标签
-        product_types_str = row_data.get("product_types", "N/A")
-        if product_types_str and product_types_str != "N/A" and product_types_str != "未知":
-            product_type_list = [pt.strip() for pt in product_types_str.split(',')]
-            tags_html_list = []
-            for p_type in product_type_list:
-                tag_class = "tag-default"
-                if "水奶" in p_type: tag_class = "tag-水奶"
-                elif "蕴淳" in p_type: tag_class = "tag-蕴淳"
-                elif "蓝钻" in p_type: tag_class = "tag-蓝钻"
-                tags_html_list.append(f'<span class="tag {tag_class}" style="font-size: 0.75em; padding: 2px 6px;">{p_type}</span>')
-            data_row_cols[3].markdown(" ".join(tags_html_list), unsafe_allow_html=True)
+        # 产品类型
+        analyzed_product_type = row_data.get("analyzed_product_type", "")
+        if analyzed_product_type:
+            # 为产品类型创建标签
+            tag_class = "tag-default"
+            if "启赋水奶" in analyzed_product_type: 
+                tag_class = "tag-启赋水奶"
+            elif "启赋蕴淳" in analyzed_product_type: 
+                tag_class = "tag-启赋蕴淳"
+            elif "启赋蓝钻" in analyzed_product_type: 
+                tag_class = "tag-启赋蓝钻"
+            
+            product_tag_html = f'<span class="tag {tag_class}" style="font-size: 0.75em; padding: 2px 6px;">{analyzed_product_type}</span>'
+            data_row_cols[4].markdown(product_tag_html, unsafe_allow_html=True)
         else:
-            data_row_cols[3].write(product_types_str)
+            data_row_cols[4].write("未识别")
+
+        # 核心卖点
+        analyzed_selling_points = row_data.get("analyzed_selling_points", [])
+        if analyzed_selling_points:
+            selling_points_text = "、".join(analyzed_selling_points)
+            data_row_cols[5].text_area(
+                label=f"selling_points_{index}_{row_data['filename']}",
+                value=selling_points_text, 
+                height=80, 
+                label_visibility='collapsed'
+            )
+        else:
+            data_row_cols[5].write("未识别")
 
         st.divider()
 
