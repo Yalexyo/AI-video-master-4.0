@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 import logging # 添加logging导入
 import shutil # 添加shutil导入
+# import json # 不再直接在此处使用json来保存元数据
 
 # 配置日志
 logging.basicConfig(
@@ -14,7 +15,7 @@ logging.basicConfig(
         logging.FileHandler(os.path.join('logs', 'app.log'))  # 输出到文件
     ]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # 在模块级别获取logger
 
 # 添加项目根目录到Python路径
 ROOT_DIR = Path(__file__).parent.parent
@@ -26,6 +27,10 @@ from streamlit_app.modules.data_loader.video_loader import find_videos
 from streamlit_app.modules.analysis.intent_analyzer import main_analysis_pipeline, SemanticAnalyzer
 # 添加视频组织器模块的导入
 from streamlit_app.modules.data_process.video_organizer import organize_segments_by_type
+# 新增：导入元数据处理器
+from streamlit_app.modules.data_process.metadata_processor import save_detailed_segments_metadata, create_srt_files_for_segments
+# 新增：导入结果展示界面函数
+from streamlit_app.modules.visualization.result_display import display_results_interface
 
 # --- 页面配置 ---
 st.set_page_config(
@@ -104,6 +109,9 @@ st.markdown("""
         color: black; /* 黑色文字 */
         border: 1px solid black; /* 黑色边框 */
     }
+
+    /* 所有自定义按钮的CSS规则均被移除 */
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -114,12 +122,14 @@ if 'video_files' not in st.session_state:
     st.session_state.video_files = []
 if 'current_folder' not in st.session_state:
     st.session_state.current_folder = None
-if 'analysis_results' not in st.session_state:
-    st.session_state.analysis_results = None
+if 'all_videos_analysis_data' not in st.session_state:
+    st.session_state.all_videos_analysis_data = None
 if 'selected_segment' not in st.session_state:
     st.session_state.selected_segment = None
 if 'selected_selling_points' not in st.session_state:
     st.session_state.selected_selling_points = []
+if 'selected_segment_filter' not in st.session_state: # 为 result_display.py 初始化筛选器状态
+    st.session_state.selected_segment_filter = "显示全部"
 
 # --- 加载配置 ---
 app_config = get_config()
@@ -228,8 +238,6 @@ if analyze_button and st.session_state.video_files:
     with st.spinner("正在分析视频，请稍候..."):
         all_videos_analysis_data = [] # 用于存储每个视频的完整分析数据
         
-        # 将 SELLING_POINTS (列表) 转换为元组，以便用作缓存键
-        # 从配置中导入 SELLING_POINTS
         from streamlit_app.config.config import SELLING_POINTS as current_selling_points_config
         selling_points_for_cache = tuple(current_selling_points_config) 
         
@@ -237,30 +245,24 @@ if analyze_button and st.session_state.video_files:
             video_file_name = os.path.basename(video_path)
             st.write(f"--- 开始处理视频: {video_file_name} ---")
             
-            # 调用主分析流水线，获取原始语义分段列表和完整转录数据
             raw_segments, full_transcript_data = main_analysis_pipeline(
                 video_path,
-                None,  # target_audience - 不再由此处传递
-                None,  # product_type - 不再由此处传递
+                None, 
+                None, 
                 selling_points_config_representation=selling_points_for_cache,
-                additional_info=""  # 不使用用户输入的具体提取信息
+                additional_info=""  
             )
             
-            # 组织按语义模块分类的片段
-            # raw_segments 本身就是 segment_video 返回的列表，其结构应与之前 analysis_results 相似
-            # 每个元素是一个字典，包含 "semantic_type", "text", "start_time", "end_time" 等
             semantic_segments_for_ui = {module: [] for module in SEMANTIC_MODULES}
-            if raw_segments: # 确保 raw_segments 不是 None 或空列表
+            if raw_segments:
                 for segment_data in raw_segments:
                     semantic_type = segment_data.get("semantic_type", "未知")
                     if semantic_type in SEMANTIC_MODULES:
-                        # 此处 segment_data 就是可以直接用于UI展示的片段信息
                         semantic_segments_for_ui[semantic_type].append(segment_data)
             
             video_product_types = set()
-            video_target_audiences = set() # 用于存储当前视频的目标人群
+            video_target_audiences = set()
 
-            # 主要的产品类型和目标人群识别逻辑：通过LLM分析SRT文件内容
             srt_content_for_llm = None
             if full_transcript_data:
                 if 'srt_content' in full_transcript_data and full_transcript_data['srt_content']:
@@ -268,8 +270,8 @@ if analyze_button and st.session_state.video_files:
                     logger.info(f"使用 full_transcript_data 中的SRT内容进行LLM产品类型分析: {video_file_name}")
                 elif 'srt_file_path' in full_transcript_data and full_transcript_data['srt_file_path']:
                     srt_path = full_transcript_data['srt_file_path']
-                    logger.info(f"尝试从 srt_file_path 读取SRT内容: {srt_path} for video: {video_file_name}") # 新增日志
-                    if os.path.exists(srt_path) and os.path.isfile(srt_path): # 确保是文件
+                    logger.info(f"尝试从 srt_file_path 读取SRT内容: {srt_path} for video: {video_file_name}")
+                    if os.path.exists(srt_path) and os.path.isfile(srt_path):
                         try:
                             with open(srt_path, 'r', encoding='utf-8') as f_srt:
                                 srt_content_for_llm = f_srt.read()
@@ -289,16 +291,15 @@ if analyze_button and st.session_state.video_files:
             if srt_content_for_llm:
                 try:
                     logger.info(f"对SRT内容进行LLM分析以识别产品类型: {video_file_name}")
-                    # sa_analyzer 已在应用启动时初始化
                     summary_results = sa_analyzer.analyze_video_summary(srt_content_for_llm)
                     
                     if summary_results and 'product_type' in summary_results:
                         for pt in summary_results['product_type']:
-                            if pt and pt in PRODUCT_TYPES: # 确保产品类型有效
+                            if pt and pt in PRODUCT_TYPES:
                                 video_product_types.add(pt)
-                    if summary_results and 'target_audience' in summary_results: # 提取目标人群
+                    if summary_results and 'target_audience' in summary_results:
                         for aud in summary_results['target_audience']:
-                            if aud and aud in TARGET_GROUPS: # 确保目标人群有效
+                            if aud and aud in TARGET_GROUPS:
                                 video_target_audiences.add(aud)
 
                     log_msg_parts = []
@@ -308,7 +309,7 @@ if analyze_button and st.session_state.video_files:
                         log_msg_parts.append(f"目标人群: {video_target_audiences}")
                     
                     if log_msg_parts:
-                        logger.info(f"LLM对SRT的分析结果 - {video_file_name} - {' , '.join(log_msg_parts)}")
+                        logger.info(f"LLM对SRT的分析结果 - {video_file_name} - {', '.join(log_msg_parts)}")
                     else:
                         logger.info(f"LLM对SRT的分析未能从 'product_type' 或 'target_audience' 字段中识别出有效信息，或字段缺失: {video_file_name}")
                 except Exception as e_llm_srt:
@@ -316,20 +317,15 @@ if analyze_button and st.session_state.video_files:
             else:
                 logger.warning(f"没有可供分析的SRT内容，无法识别产品类型: {video_file_name}")
             
-            # print(f"DEBUG: Semantic segments BEFORE filtering for video {video_file_name}: {semantic_segments}") 
-
-            # 过滤掉没有内容的分类
             semantic_segments_for_ui = {k: v for k, v in semantic_segments_for_ui.items() if v}
-            
-            # print(f"DEBUG: Semantic segments AFTER filtering for video {video_file_name}: {semantic_segments}") 
             
             all_videos_analysis_data.append({
                 "video_id": os.path.splitext(video_file_name)[0],
                 "video_path": video_path,
-                "semantic_segments": semantic_segments_for_ui, # 使用新的变量名
+                "semantic_segments": semantic_segments_for_ui, 
                 "full_transcript_data": full_transcript_data,
                 "product_types": list(video_product_types) if video_product_types else [], 
-                "target_audiences": list(video_target_audiences) if video_target_audiences else [] # 使用新的变量存储和传递
+                "target_audiences": list(video_target_audiences) if video_target_audiences else [] 
             })
         
         st.session_state.all_videos_analysis_data = all_videos_analysis_data
@@ -337,10 +333,9 @@ if analyze_button and st.session_state.video_files:
         if not st.session_state.all_videos_analysis_data:
             st.warning("所有视频均分析完成，但未获得任何有效结果。")
         
-        # 分析完成后，调用函数按语义类型组织视频片段
         try:
             logger.info("开始调用 organize_segments_by_type() 函数组织视频片段...")
-            success = organize_segments_by_type()
+            success = organize_segments_by_type() # 此函数现在只负责复制物理文件
             if success:
                 st.success("已按语义类型组织视频片段到data/output目录")
                 logger.info("视频片段已成功按语义类型组织")
@@ -351,90 +346,32 @@ if analyze_button and st.session_state.video_files:
             st.error(f"组织视频片段时出错: {str(e)}")
             logger.error(f"调用 organize_segments_by_type() 函数出错: {str(e)}", exc_info=True)
 
-# 创建结果显示容器
-results_container = st.container()
-with results_container:
-    if st.session_state.get('all_videos_analysis_data'):
-        st.markdown("## 候选视频列表：")
+        # --- 调用新的元数据保存函数 ---
+        # if st.session_state.get('all_videos_analysis_data'): # 这段逻辑似乎重复了，且位置不太对，先注释掉以避免混淆
+        #     try:
+        #         save_detailed_segments_metadata(st.session_state.all_videos_analysis_data, ROOT_DIR, logger)
+        #     except Exception as e_save_meta:
+        #         logger.error(f"调用 save_detailed_segments_metadata 失败: {e_save_meta}", exc_info=True)
+        #         st.error(f"保存分析结果元数据时发生错误: {e_save_meta}")
 
-        # 将视频数据分组，每组4个视频用于一行展示
-        grouped_videos = [st.session_state.all_videos_analysis_data[i:i + 4] for i in range(0, len(st.session_state.all_videos_analysis_data), 4)]
-        
-        for video_group in grouped_videos:
-            cols = st.columns(len(video_group))
-            for i, video_data in enumerate(video_group):
-                with cols[i]:
-                    # 使用视频卡片样式
-                    st.markdown(f"""    
-                    <div class="video-card">
-                        <h3>视频{video_data['video_id']}</h3>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # 显示产品类型和目标人群标签
-                    product_types = video_data.get('product_types', [])
-                    target_audiences = video_data.get('target_audiences', [])
-                    
-                    tags_html = '<div style="margin-bottom: 10px; display: flex; flex-wrap: wrap; align-items: center;">' # 使用flex布局
+        # --- 确保在分析流程的末尾正确保存元数据和生成SRT ---
+        if analyze_button and st.session_state.video_files: # 确保这些操作在分析完成后执行
+            if st.session_state.all_videos_analysis_data:
+                logger.info("准备（再次确认）保存所有视频片段的详细元数据...")
+                if save_detailed_segments_metadata(st.session_state.all_videos_analysis_data, ROOT_DIR, logger):
+                    logger.info("详细片段元数据（再次确认）保存成功。")
+                    logger.info("准备（再次确认）为所有片段生成SRT字幕文件...")
+                    create_srt_files_for_segments(ROOT_DIR, logger)
+                    logger.info("SRT字幕文件（再次确认）生成流程调用完毕。")
+                else:
+                    logger.error("详细片段元数据（再次确认）保存失败。")
+            else:
+                logger.warning("分析后没有有效的分析数据可用于保存元数据。all_videos_analysis_data 为空或不存在。")
 
-                    if product_types:
-                        tags_html += '<div style="margin-right: 10px;">' # 产品类型组容器
-                        for p_type in product_types:
-                            tag_class = "tag-default"
-                            if "水奶" in p_type:
-                                tag_class = "tag-水奶"
-                            elif "蕴淳" in p_type:
-                                tag_class = "tag-蕴淳"
-                            elif "蓝钻" in p_type: # 假设有蓝钻的样式
-                                tag_class = "tag-蓝钻"
-                            tags_html += f'<span class="tag {tag_class}">{p_type}</span> '
-                        tags_html += '</div>'
+# 总是尝试调用 display_results_interface。
+# 它会从 video_segments_metadata.json 加载数据。
+display_results_interface(analysis_results=st.session_state.get('all_videos_analysis_data'))
 
-                    if target_audiences:
-                        tags_html += '<div>' # 目标人群组容器
-                        # 根据config中的TARGET_GROUPS动态生成颜色或类别 (简化版，仅使用通用样式)
-                        for audience in target_audiences:
-                            # 查找audience在TARGET_GROUPS中的索引以分配不同颜色，或使用固定样式
-                            # 这里我们使用统一的 tag-audience 样式，颜色在CSS中定义
-                            audience_tag_class = "tag-audience" 
-                            tags_html += f'<span class="tag {audience_tag_class}">{audience}</span> '
-                        tags_html += '</div>'
-                    
-                    tags_html += '</div>' # 关闭flex容器
-                    
-                    if product_types or target_audiences:
-                        st.markdown(tags_html, unsafe_allow_html=True)
-
-                    # 检查语义分段结果是否为空
-                    if not video_data['semantic_segments']:
-                        st.warning(f"视频 {video_data['video_id']}: 未能成功进行语义分段。可能是由于API调用失败或模型无法处理该视频内容。请检查日志了解详情。")
-                    else:
-                        # 折叠框显示每个模块的分析结果
-                        for module, segments_in_module in video_data['semantic_segments'].items():
-                            if segments_in_module: # 确保该模块下有片段才显示
-                                # 显示模块标题 (例如：广告开场：)
-                                st.markdown(f"**{module}：**")
-                                
-                                # 遍历该模块下的所有片段
-                                for segment in segments_in_module:
-                                    # 显示匹配转录和时间段
-                                    asr_text = segment.get('asr_matched_text', "(无匹配文本)")
-                                    time_period = segment.get('time_period', "00:00:00 - 00:00:00")
-                                    
-                                    st.markdown(f"匹配转录：") # 固定文本
-                                    st.markdown(f"{time_period}") # 实际时间戳
-                                    
-                                    # 显示实际的ASR文本
-                                    st.markdown(f"\"{asr_text}\"")
-                                    
-                                    # 每个片段后可以加一个小的分隔，或者不加，根据视觉效果决定
-                                    st.markdown("----", unsafe_allow_html=True) # 轻量级分隔
-                                # 每个模块的所有片段显示完毕后，可以加一个更明显的分隔
-                                st.markdown("<hr style='margin: 0.5rem 0;'>", unsafe_allow_html=True)
-    elif analyze_button and not st.session_state.video_files:
-        st.error("请先上传或指定一个视频文件/文件夹再进行分析！")
-
-# --- 页脚或其他信息 ---
-# st.sidebar.info("这是一个视频分析工具")
-
-# 运行: streamlit run streamlit_app/app.py 
+# 错误消息：仅当用户明确点击分析按钮但没有选择任何视频文件时显示。
+if analyze_button and not st.session_state.video_files:
+    st.error("请先上传或指定一个视频文件/文件夹再进行分析！") 

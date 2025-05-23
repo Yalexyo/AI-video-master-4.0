@@ -1,0 +1,315 @@
+import os
+import json
+import logging
+from pathlib import Path
+from streamlit_app.config.config import get_paths_config
+
+# Logger will be passed from the calling module (e.g., app.py)
+# logger = logging.getLogger(__name__) # Avoid creating a new logger instance here
+
+def format_ms_time(ms_value):
+    """将毫秒时间转换为 HH:MM:SS.mmm 格式"""
+    if ms_value is None:
+        return "时间未知"
+    try:
+        # Ensure ms_value is an integer or float
+        ms_value = float(ms_value)
+    except (ValueError, TypeError):
+        return "时间格式无效"
+
+    s, ms_part = divmod(ms_value, 1000)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return f"{int(h):02d}:{int(m):02d}:{int(s):02d}.{int(ms_part):03d}"
+
+def save_detailed_segments_metadata(all_videos_analysis_data, root_dir, logger):
+    """
+    保存所有视频片段的详细元数据到 JSON 文件。
+
+    Args:
+        all_videos_analysis_data (list): 包含所有视频分析数据的列表。
+                                         每个视频数据字典应包含 "video_id" 和 "semantic_segments"。
+                                         "semantic_segments" 是一个字典，键是语义类型，值是片段详情列表。
+                                         每个片段详情字典应包含 "segment_path", "asr_matched_text" (或 "text"),
+                                         "start_time" (秒), "end_time" (秒)。
+        root_dir (str): 项目的根目录路径。
+        logger (logging.Logger): 用于日志记录的Logger实例。
+    """
+    if not all_videos_analysis_data:
+        logger.info("没有分析数据可供保存元数据。")
+        return False # 返回 False 表示没有数据或未执行保存
+
+    current_run_segments_metadata = [] # 存储当前运行分析得出的元数据
+    output_root_dir = os.path.join(root_dir, "data", "output")
+
+    for video_data in all_videos_analysis_data:
+        original_video_id = video_data.get("video_id", "N/A")
+        semantic_segments = video_data.get("semantic_segments", {})
+        
+        # 修正：确保从 video_data 中获取产品类型时使用 "product_types" 键
+        llm_analyzed_product_types = video_data.get("product_types", []) # 默认为空列表
+        product_types_str = ", ".join(llm_analyzed_product_types) if llm_analyzed_product_types else "未知"
+
+        if not semantic_segments:
+            logger.debug(f"视频 {original_video_id} 没有语义分段信息，跳过元数据保存。")
+            continue
+
+        for semantic_type, segments_in_module in semantic_segments.items():
+            for segment_detail in segments_in_module:
+                transcript_text = segment_detail.get('asr_matched_text', segment_detail.get('text', "转录待定"))
+                
+                # start_time 和 end_time 从 segment_detail 中获取的是秒
+                start_time_seconds = segment_detail.get('start_time')
+                end_time_seconds = segment_detail.get('end_time')
+
+                # 转换为毫秒以供 format_ms_time 使用
+                start_time_ms = start_time_seconds * 1000 if start_time_seconds is not None else None
+                end_time_ms = end_time_seconds * 1000 if end_time_seconds is not None else None
+                
+                time_info_str = f"{format_ms_time(start_time_ms)} - {format_ms_time(end_time_ms)}"
+
+                segment_full_path = segment_detail.get("segment_path")
+                segment_filename = os.path.basename(segment_full_path) if segment_full_path else f"{original_video_id}_seg_UNKNOWN_{semantic_type}.mp4"
+                
+                if not segment_full_path:
+                    logger.warning(f"片段详情缺少 segment_path: {segment_detail}, 使用占位文件名: {segment_filename}")
+
+                current_run_segments_metadata.append({
+                    "type": semantic_type,
+                    "filename": segment_filename,
+                    "original_video_id": original_video_id,
+                    "time_info": time_info_str,
+                    "transcript": transcript_text,
+                    # 保留 start_time_ms 和 end_time_ms 以便 SRT 生成更精确
+                    "start_time_ms": start_time_ms,
+                    "end_time_ms": end_time_ms,
+                    "product_types": product_types_str # 新增产品类型字段
+                })
+    
+    if not current_run_segments_metadata:
+        logger.info("当前分析运行没有产生有效的片段元数据可保存。")
+        return True # 逻辑上没有失败，只是没新东西，但可能需要保存旧数据（如果存在）
+
+    metadata_file_path = os.path.join(output_root_dir, "video_segments_metadata.json")
+    final_metadata_to_save = []
+    processed_video_ids_in_current_run = {item['original_video_id'] for item in current_run_segments_metadata}
+
+    # 1. 尝试加载现有元数据
+    existing_metadata = []
+    if os.path.exists(metadata_file_path):
+        try:
+            with open(metadata_file_path, 'r', encoding='utf-8') as f:
+                existing_metadata = json.load(f)
+            logger.info(f"已加载现有的元数据，共 {len(existing_metadata)} 条记录。")
+        except json.JSONDecodeError:
+            logger.warning(f"现有的元数据文件 {metadata_file_path} 格式不正确，将作为空文件处理。")
+        except Exception as e_load:
+            logger.error(f"加载现有元数据文件 {metadata_file_path} 失败: {e_load}", exc_info=True)
+            # 如果加载失败，为了数据安全，可以选择不继续，或者只保存当前运行的数据
+            # 这里选择继续，但只使用当前运行的数据，以避免损坏旧数据（如果文件存在但无法读取）
+            pass # 将 existing_metadata 保持为空列表
+
+    # 2. 合并元数据：保留未在当前运行中处理的旧视频的元数据
+    if existing_metadata:
+        for old_item in existing_metadata:
+            if old_item.get('original_video_id') not in processed_video_ids_in_current_run:
+                final_metadata_to_save.append(old_item)
+        logger.info(f"保留了 {len(final_metadata_to_save)} 条来自未被本次分析覆盖的旧视频的元数据。")
+
+    # 3. 添加/替换当前运行分析的视频的元数据
+    final_metadata_to_save.extend(current_run_segments_metadata)
+    logger.info(f"合并后，最终元数据共 {len(final_metadata_to_save)} 条记录。")
+
+    if not final_metadata_to_save:
+        logger.info("最终没有元数据可保存（可能是初始运行且无数据，或合并后为空）。")
+        # 确保空文件也被写入，以便下游知道是空的
+        # os.makedirs(output_root_dir, exist_ok=True)
+        # with open(metadata_file_path, 'w', encoding='utf-8') as f:
+        #     json.dump([], f, ensure_ascii=False, indent=4)
+        return True # 没有失败，只是没内容
+
+    try:
+        os.makedirs(output_root_dir, exist_ok=True) # 确保输出目录存在
+        with open(metadata_file_path, 'w', encoding='utf-8') as f:
+            json.dump(final_metadata_to_save, f, ensure_ascii=False, indent=4)
+        logger.info(f"已将合并后的详细片段元数据保存到: {metadata_file_path}")
+        return True
+    except Exception as e:
+        logger.error(f"保存详细片段元数据失败: {e}", exc_info=True)
+        return False
+
+# --- 新增 SRT 生成功能 ---
+
+def _time_str_to_seconds(time_str: str) -> float:
+    """将 HH:MM:SS.mmm 或 HH:MM:SS,mmm 格式的时间字符串转换为总秒数"""
+    if not time_str or not isinstance(time_str, str):
+        return 0.0
+    time_str = time_str.replace(',', '.') # 兼容逗号作为毫秒分隔符
+    parts = time_str.split(':')
+    try:
+        if len(parts) == 3:
+            h = int(parts[0])
+            m = int(parts[1])
+            s_ms = parts[2].split('.')
+            s = int(s_ms[0])
+            ms = int(s_ms[1]) if len(s_ms) > 1 else 0
+            return h * 3600 + m * 60 + s + ms / 1000.0
+        elif len(parts) == 2: # MM:SS.mmm
+            m = int(parts[0])
+            s_ms = parts[1].split('.')
+            s = int(s_ms[0])
+            ms = int(s_ms[1]) if len(s_ms) > 1 else 0
+            return m * 60 + s + ms / 1000.0
+        elif len(parts) == 1: # SS.mmm
+            s_ms = parts[0].split('.')
+            s = int(s_ms[0])
+            ms = int(s_ms[1]) if len(s_ms) > 1 else 0
+            return s + ms / 1000.0
+    except ValueError:
+        # 如果解析失败，可以记录一个警告或返回0
+        # logger.warning(f"无法解析时间字符串: {time_str}") # logger 需要传递进来
+        return 0.0
+    return 0.0
+
+
+def _seconds_to_srt_time_format(total_seconds: float) -> str:
+    """将总秒数转换为 SRT 的 HH:MM:SS,mmm 格式"""
+    if total_seconds < 0:
+        total_seconds = 0
+    hours = int(total_seconds // 3600)
+    minutes = int((total_seconds % 3600) // 60)
+    seconds = int(total_seconds % 60)
+    milliseconds = int((total_seconds - int(total_seconds)) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+def create_srt_files_for_segments(root_dir, logger):
+    """
+    根据 video_segments_metadata.json 为每个片段创建 SRT 字幕文件。
+    SRT 文件将保存在 data/output/{语义类型}/{original_video_id}/{segment_filename_without_ext}.srt
+
+    Args:
+        root_dir (Path or str): 项目的根目录。
+        logger: 日志记录器实例。
+    """
+    root_dir = Path(root_dir)
+    # paths_config = get_paths_config() # 不再需要 transcripts_dir
+    output_dir = root_dir / "data" / "output" # SRT文件将直接保存到 output 目录下的相应结构中
+    metadata_file_path = output_dir / "video_segments_metadata.json"
+    # transcripts_base_dir = Path(paths_config.get("transcripts_dir")) # 移除这一行
+
+    if not metadata_file_path.exists():
+        logger.warning(f"元数据文件 {metadata_file_path} 不存在，无法生成 SRT 文件。")
+        return
+
+    try:
+        with open(metadata_file_path, 'r', encoding='utf-8') as f:
+            segments_metadata = json.load(f)
+    except Exception as e:
+        logger.error(f"加载元数据文件 {metadata_file_path} 失败: {e}", exc_info=True)
+        return
+
+    if not segments_metadata:
+        logger.info("元数据为空，没有 SRT 文件可生成。")
+        return
+
+    srt_files_created_count = 0
+    for segment_meta in segments_metadata:
+        try:
+            segment_filename = segment_meta.get("filename")
+            original_video_id = segment_meta.get("original_video_id")
+            time_info_str = segment_meta.get("time_info") # "HH:MM:SS.mmm - HH:MM:SS.mmm"
+            transcript_text = segment_meta.get("transcript")
+            semantic_type = segment_meta.get("type") # 获取语义类型
+
+            if not all([segment_filename, original_video_id, time_info_str, transcript_text, semantic_type]):
+                logger.warning(f"片段元数据不完整，跳过 SRT 生成: {segment_meta.get('filename', '未知文件名')}")
+                continue
+
+            # 解析时间信息
+            time_parts = time_info_str.split(" - ")
+            if len(time_parts) != 2:
+                logger.warning(f"时间信息格式不正确 '{time_info_str}' for {segment_filename}，跳过 SRT 生成。")
+                continue
+            
+            # 片段在原视频中的开始和结束时间（秒）
+            # segment_start_in_original_seconds = _time_str_to_seconds(time_parts[0])
+            # segment_end_in_original_seconds = _time_str_to_seconds(time_parts[1])
+            # segment_duration_seconds = segment_end_in_original_seconds - segment_start_in_original_seconds
+            
+            # 直接使用 format_ms_time 返回的 HH:MM:SS.mmm 作为片段时长
+            # 需要从 metadata_processor.py 中导入 format_ms_time，或者重新实现其逻辑
+            # 这里我们假设 time_info 已经是 "start_time - end_time" (均为毫秒)
+            # 假设元数据中的 time_info 是 "HH:MM:SS.mmm - HH:MM:SS.mmm" (表示在原视频中的时间)
+            # 我们需要的是片段自身的时长
+            
+            # 修正： 从元数据获取 start_time_ms 和 end_time_ms (假设它们是以毫秒为单位存在)
+            # 如果没有，则需要从 "HH:MM:SS.mmm - HH:MM:SS.mmm" 解析
+            start_time_ms = segment_meta.get("start_time_ms")
+            end_time_ms = segment_meta.get("end_time_ms")
+
+            segment_duration_seconds = 0
+            if start_time_ms is not None and end_time_ms is not None:
+                 segment_duration_seconds = (float(end_time_ms) - float(start_time_ms)) / 1000.0
+            elif isinstance(time_info_str, str) and " - " in time_info_str:
+                 original_start_seconds = _time_str_to_seconds(time_parts[0])
+                 original_end_seconds = _time_str_to_seconds(time_parts[1])
+                 segment_duration_seconds = original_end_seconds - original_start_seconds
+            else:
+                logger.warning(f"无法确定片段时长 for {segment_filename} from time_info: {time_info_str} or ms times. 跳过。")
+                continue
+
+            if segment_duration_seconds <= 0:
+                logger.warning(f"计算得到的片段时长为零或负数 for {segment_filename} ({segment_duration_seconds}s)，跳过 SRT 生成。")
+                continue
+
+            srt_start_time = "00:00:00,000"
+            srt_end_time = _seconds_to_srt_time_format(segment_duration_seconds)
+
+            srt_content = f"1\\n{srt_start_time} --> {srt_end_time}\\n{transcript_text}\\n\\n"
+
+            # 构建SRT文件的目标路径
+            # 旧路径: srt_parent_dir = transcripts_base_dir / semantic_type / original_video_id
+            # 新路径: srt_parent_dir 直接在 output_dir 下构建
+            srt_parent_dir = output_dir / semantic_type / original_video_id
+            srt_parent_dir.mkdir(parents=True, exist_ok=True)
+
+            srt_filename = Path(segment_filename).stem + ".srt"
+            srt_file_path = srt_parent_dir / srt_filename
+
+            with open(srt_file_path, 'w', encoding='utf-8') as f:
+                f.write(srt_content)
+            # logger.info(f"已生成 SRT 文件: {srt_file_path}") # 减少日志量
+            srt_files_created_count += 1
+
+        except Exception as e:
+            logger.error(f"为片段 {segment_meta.get('filename', '未知')} 生成 SRT 时出错: {e}", exc_info=True)
+            continue
+    
+    if srt_files_created_count > 0:
+        logger.info(f"SRT 文件生成完成。共创建 {srt_files_created_count} 个 SRT 文件。")
+    else:
+        logger.info("没有新的 SRT 文件被创建（可能元数据为空或已处理）。")
+
+# Example usage (for testing, not to be run directly usually)
+if __name__ == '__main__':
+    # This is a dummy logger for standalone testing
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    test_logger = logging.getLogger(__name__ + "_test")
+    
+    # Assume project root is two levels up from streamlit_app/modules/data_process
+    project_root_for_test = Path(__file__).parent.parent.parent.parent 
+    
+    # You might need to create a dummy video_segments_metadata.json in 
+    # <project_root_for_test>/data/output/ for this test to run.
+    # And ensure a config.py exists that get_paths_config can use.
+    
+    # Dummy metadata for testing _time_str_to_seconds and _seconds_to_srt_time_format
+    # print(_time_str_to_seconds("00:01:15.345"))
+    # print(_seconds_to_srt_time_format(75.345))
+    # print(_time_str_to_seconds("01:15.345"))
+    # print(_time_str_to_seconds("15.345"))
+
+
+    # create_srt_files_for_segments(project_root_for_test, test_logger)
+    pass 
