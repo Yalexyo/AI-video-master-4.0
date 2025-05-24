@@ -22,7 +22,7 @@ ROOT_DIR = Path(__file__).parent.parent
 sys.path.append(str(ROOT_DIR))
 
 # 修改导入路径
-from streamlit_app.config.config import get_config, TARGET_GROUPS, SELLING_POINTS, PRODUCT_TYPES, SEMANTIC_SEGMENT_TYPES, SEMANTIC_MODULES
+from streamlit_app.config.config import get_config, get_semantic_segment_types, get_semantic_modules, TARGET_GROUPS
 from streamlit_app.modules.data_loader.video_loader import find_videos
 from streamlit_app.modules.analysis.intent_analyzer import main_analysis_pipeline, SemanticAnalyzer
 # 添加视频组织器模块的导入
@@ -138,6 +138,83 @@ st.markdown("""
     }
     .tag-启赋蓝钻 {
         background-color: #9C27B0; /* 紫色 */
+    }
+    
+    /* 侧边栏宽度控制 */
+    .css-1d391kg {
+        width: 180px !important;
+        min-width: 180px !important;
+        max-width: 180px !important;
+    }
+    
+    /* 侧边栏内容区域 */
+    .css-1lcbmhc {
+        width: 180px !important;
+        min-width: 180px !important;
+        max-width: 180px !important;
+    }
+    
+    /* 主内容区域自适应 */
+    .css-18e3th9 {
+        padding-left: 200px !important;
+    }
+    
+    /* 更通用的侧边栏样式控制 */
+    section[data-testid="stSidebar"] {
+        width: 180px !important;
+        min-width: 180px !important;
+        max-width: 180px !important;
+    }
+    
+    section[data-testid="stSidebar"] > div {
+        width: 180px !important;
+        min-width: 180px !important;
+        max-width: 180px !important;
+    }
+    
+    /* 侧边栏导航链接样式优化 */
+    .css-1v0mbdj a {
+        font-size: 0.9rem !important;
+        padding: 0.5rem 0.75rem !important;
+    }
+    
+    /* 隐藏侧边栏调整手柄 */
+    .css-1cypcdb {
+        display: none !important;
+    }
+    
+    /* 转录编辑相关样式 */
+    .transcript-container {
+        border: 1px solid #e6e6e6;
+        border-radius: 8px;
+        padding: 10px;
+        margin: 5px 0;
+    }
+    
+    .transcript-changes {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 4px;
+        padding: 8px;
+        margin-top: 5px;
+    }
+    
+    .transcript-save-btn {
+        background-color: #28a745 !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 4px !important;
+        padding: 5px 10px !important;
+        font-size: 0.85em !important;
+    }
+    
+    .transcript-reset-btn {
+        background-color: #6c757d !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 4px !important;
+        padding: 5px 10px !important;
+        font-size: 0.85em !important;
     }
 </style>""", unsafe_allow_html=True)
 
@@ -279,21 +356,20 @@ if analyze_button and st.session_state.video_files:
                 additional_info=""  
             )
             
-            semantic_segments_for_ui = {module: [] for module in SEMANTIC_MODULES}
+            semantic_segments_for_ui = {module: [] for module in get_semantic_modules()}
             if raw_segments:
                 for segment_data in raw_segments:
                     semantic_type = segment_data.get("semantic_type", "未知")
-                    if semantic_type in SEMANTIC_MODULES:
+                    if semantic_type in get_semantic_segment_types():
                         semantic_segments_for_ui[semantic_type].append(segment_data)
             
-            video_product_types = set()
             video_target_audiences = set()
 
             srt_content_for_llm = None
             if full_transcript_data:
                 if 'srt_content' in full_transcript_data and full_transcript_data['srt_content']:
                     srt_content_for_llm = full_transcript_data['srt_content']
-                    logger.info(f"使用 full_transcript_data 中的SRT内容进行LLM产品类型分析: {video_file_name}")
+                    logger.info(f"使用 full_transcript_data 中的SRT内容进行LLM目标人群分析: {video_file_name}")
                 elif 'srt_file_path' in full_transcript_data and full_transcript_data['srt_file_path']:
                     srt_path = full_transcript_data['srt_file_path']
                     logger.info(f"尝试从 srt_file_path 读取SRT内容: {srt_path} for video: {video_file_name}")
@@ -302,7 +378,7 @@ if analyze_button and st.session_state.video_files:
                             with open(srt_path, 'r', encoding='utf-8') as f_srt:
                                 srt_content_for_llm = f_srt.read()
                             if srt_content_for_llm:
-                                logger.info(f"成功从文件 {srt_path} 读取SRT内容进行LLM产品类型分析: {video_file_name}")
+                                logger.info(f"成功从文件 {srt_path} 读取SRT内容进行LLM目标人群分析: {video_file_name}")
                             else:
                                 logger.warning(f"SRT文件 {srt_path} 为空。")
                         except Exception as e_read_srt:
@@ -312,36 +388,72 @@ if analyze_button and st.session_state.video_files:
                 else:
                     logger.warning(f"在 full_transcript_data 中未找到 'srt_content' 或 'srt_file_path' 键，或者路径无效: {video_file_name}. Keys: {list(full_transcript_data.keys()) if full_transcript_data else 'N/A'}")
             else:
-                logger.warning(f"full_transcript_data 为空，无法获取SRT内容进行LLM产品类型分析: {video_file_name}")
+                logger.warning(f"full_transcript_data 为空，无法获取SRT内容进行LLM目标人群分析: {video_file_name}")
 
             if srt_content_for_llm:
                 try:
-                    logger.info(f"对SRT内容进行LLM分析以识别产品类型: {video_file_name}")
+                    logger.info(f"对SRT内容进行LLM分析以识别目标人群: {video_file_name}")
                     summary_results = sa_analyzer.analyze_video_summary(srt_content_for_llm)
                     
-                    if summary_results and 'product_type' in summary_results:
-                        for pt in summary_results['product_type']:
-                            if pt and pt in PRODUCT_TYPES:
-                                video_product_types.add(pt)
                     if summary_results and 'target_audience' in summary_results:
-                        for aud in summary_results['target_audience']:
-                            if aud and aud in TARGET_GROUPS:
-                                video_target_audiences.add(aud)
+                        target_audience = summary_results['target_audience']
+                        # 确保只返回一个目标人群
+                        if target_audience and target_audience in TARGET_GROUPS:
+                            video_target_audiences.add(target_audience)
 
-                    log_msg_parts = []
-                    if video_product_types:
-                        log_msg_parts.append(f"产品类型: {video_product_types}")
+                    # 兜底机制：如果LLM没有识别出目标人群，基于关键词进行兜底分析
+                    if not video_target_audiences:
+                        logger.warning(f"LLM未能识别出目标人群，启用关键词兜底机制: {video_file_name}")
+                        srt_lower = srt_content_for_llm.lower()
+                        
+                        # 关键词映射规则（按优先级排序）
+                        priority_mapping = [
+                            ("二胎妈妈", ["二胎", "老大", "老二", "两个孩子", "大宝", "二宝"]),
+                            ("孕期妈妈", ["刚生完", "产后", "待产包", "产检", "建档", "准妈妈", "卸货", "分娩", "生产", "产科", "新生宝宝", "出生后"]),
+                            ("混养妈妈", ["混合喂养", "混喂", "亲喂", "母乳不足", "奶量不够", "奶水不足"]),
+                            ("贵妇妈妈", ["高端", "奢华", "精致", "品质", "贵", "高价", "进口", "顶级"]),
+                            ("新手爸妈", ["新手", "没有经验", "第一次", "不知道怎么", "学习", "初次", "新手爸爸", "新手妈妈"])
+                        ]
+                        
+                        # 按优先级检查关键词匹配，找到第一个匹配的就停止
+                        target_found = False
+                        for target_group, keywords in priority_mapping:
+                            if not target_found:
+                                for keyword in keywords:
+                                    if keyword in srt_lower:
+                                        video_target_audiences.add(target_group)
+                                        logger.info(f"通过关键词 '{keyword}' 识别目标人群 '{target_group}': {video_file_name}")
+                                        target_found = True
+                                        break
+                        
+                        # 如果仍然没有识别出目标人群，使用最终兜底
+                        if not target_found:
+                            # 检查是否包含产品相关内容，如果有则默认分配给"新手爸妈"
+                            product_keywords = ["奶粉", "启赋", "蕴淳", "水奶", "母乳低聚糖", "hmo", "a2奶源"]
+                            has_product_content = any(keyword in srt_lower for keyword in product_keywords)
+                            
+                            if has_product_content:
+                                video_target_audiences.add("新手爸妈")
+                                logger.info(f"基于产品内容特征，默认分配给'新手爸妈': {video_file_name}")
+                            else:
+                                # 最终兜底：分配给最通用的"新手爸妈"
+                                video_target_audiences.add("新手爸妈")
+                                logger.info(f"最终兜底机制，分配给'新手爸妈': {video_file_name}")
+
                     if video_target_audiences:
-                        log_msg_parts.append(f"目标人群: {video_target_audiences}")
-                    
-                    if log_msg_parts:
-                        logger.info(f"LLM对SRT的分析结果 - {video_file_name} - {', '.join(log_msg_parts)}")
+                        logger.info(f"最终目标人群分析结果 - {video_file_name} - 目标人群: {list(video_target_audiences)}")
                     else:
-                        logger.info(f"LLM对SRT的分析未能从 'product_type' 或 'target_audience' 字段中识别出有效信息，或字段缺失: {video_file_name}")
+                        logger.error(f"严重错误：兜底机制失败，仍未识别出目标人群: {video_file_name}")
                 except Exception as e_llm_srt:
-                    logger.error(f"LLM分析SRT内容以识别产品类型时发生错误 - {video_file_name}: {str(e_llm_srt)}")
+                    logger.error(f"LLM分析SRT内容以识别目标人群时发生错误 - {video_file_name}: {str(e_llm_srt)}")
+                    # 异常情况的兜底：分配给"新手爸妈"
+                    video_target_audiences.add("新手爸妈")
+                    logger.info(f"异常情况兜底，分配给'新手爸妈': {video_file_name}")
             else:
-                logger.warning(f"没有可供分析的SRT内容，无法识别产品类型: {video_file_name}")
+                logger.warning(f"没有可供分析的SRT内容，无法识别目标人群: {video_file_name}")
+                # 没有SRT内容的兜底：分配给"新手爸妈"
+                video_target_audiences.add("新手爸妈")
+                logger.info(f"无SRT内容兜底，分配给'新手爸妈': {video_file_name}")
             
             semantic_segments_for_ui = {k: v for k, v in semantic_segments_for_ui.items() if v}
             
@@ -350,7 +462,6 @@ if analyze_button and st.session_state.video_files:
                 "video_path": video_path,
                 "semantic_segments": semantic_segments_for_ui, 
                 "full_transcript_data": full_transcript_data,
-                "product_types": list(video_product_types) if video_product_types else [], 
                 "target_audiences": list(video_target_audiences) if video_target_audiences else [] 
             })
         

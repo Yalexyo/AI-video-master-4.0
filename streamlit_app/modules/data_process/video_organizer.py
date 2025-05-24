@@ -9,10 +9,32 @@ import logging
 import traceback
 from pathlib import Path
 
-from streamlit_app.config.config import SEMANTIC_SEGMENT_TYPES, get_config, get_paths_config
+from streamlit_app.config.config import get_config, get_paths_config, get_semantic_segment_types
 
 # 设置日志
 logger = logging.getLogger(__name__)
+
+def create_semantic_type_directories():
+    """在data/output目录下为每种语义类型创建子目录"""
+    try:
+        paths_config = get_paths_config()
+        output_dir = Path(paths_config.get("output_dir"))
+        
+        # 确保主输出目录存在
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 使用动态获取的语义类型
+        semantic_segment_types = get_semantic_segment_types()
+        for segment_type in semantic_segment_types:
+            segment_dir = output_dir / segment_type
+            segment_dir.mkdir(exist_ok=True)
+            logger.debug(f"已确保目录存在: {segment_dir}")
+        
+        logger.info(f"已为以下语义类型创建目录: {semantic_segment_types}")
+        return True
+    except Exception as e:
+        logger.error(f"创建语义类型目录时出错: {str(e)}")
+        return False
 
 def organize_segments_by_type():
     """
@@ -54,14 +76,14 @@ def organize_segments_by_type():
         
         # 为每种语义类型创建目录
         type_dirs = []
-        for segment_type in SEMANTIC_SEGMENT_TYPES:
+        for segment_type in get_semantic_segment_types():
             type_dir = os.path.join(output_dir, segment_type)
             type_dirs.append(type_dir)
             if not os.path.exists(type_dir):
                 os.makedirs(type_dir)
                 logger.info(f"创建语义类型目录: {type_dir}")
         
-        logger.info(f"已为以下语义类型创建目录: {SEMANTIC_SEGMENT_TYPES}")
+        logger.info(f"已为以下语义类型创建目录: {get_semantic_segment_types()}")
         
         # 遍历所有视频ID目录
         video_count = 0
@@ -101,8 +123,9 @@ def organize_segments_by_type():
                         
                         logger.info(f"从文件名 {segment_file} 提取到语义类型: {segment_type}")
                         
-                        # 验证语义类型是否在预定义列表中
-                        if segment_type in SEMANTIC_SEGMENT_TYPES:
+                        # 检查语义类型是否有效
+                        semantic_segment_types = get_semantic_segment_types()
+                        if segment_type in semantic_segment_types:
                             source_path = os.path.join(video_dir_path, segment_file)
                             # 在目标目录中使用原始文件名，保留视频ID信息
                             target_path = os.path.join(output_dir, segment_type, segment_file)
@@ -112,24 +135,8 @@ def organize_segments_by_type():
                             logger.info(f"已复制: {source_path} -> {target_path}")
                             segment_count += 1
                         else:
-                            logger.warning(f"提取的语义类型 '{segment_type}' 不在预定义列表中: {SEMANTIC_SEGMENT_TYPES}")
-                            
-                            # 尝试在文件名中查找匹配的语义类型
-                            type_found = False
-                            for type_name in SEMANTIC_SEGMENT_TYPES:
-                                if type_name in segment_file:
-                                    source_path = os.path.join(video_dir_path, segment_file)
-                                    target_path = os.path.join(output_dir, type_name, segment_file)
-                                    
-                                    # 复制文件
-                                    shutil.copy2(source_path, target_path)
-                                    logger.info(f"已复制 (使用匹配): {source_path} -> {target_path}")
-                                    segment_count += 1
-                                    type_found = True
-                                    break
-                            
-                            if not type_found:
-                                logger.warning(f"无法确定文件 {segment_file} 的语义类型，跳过")
+                            logger.warning(f"提取的语义类型 '{segment_type}' 不在预定义列表中: {semantic_segment_types}")
+                            continue
                     else:
                         logger.warning(f"文件名 {segment_file} 不符合预期格式，跳过")
                 except Exception as e:

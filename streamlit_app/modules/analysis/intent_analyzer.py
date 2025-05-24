@@ -7,7 +7,7 @@ import streamlit as st
 from datetime import datetime
 from typing import Dict, Any
 
-from streamlit_app.config.config import get_config, TARGET_GROUPS, SELLING_POINTS, PRODUCT_TYPES, BRAND_KEYWORDS, SEMANTIC_SEGMENT_TYPES
+from streamlit_app.config.config import get_config, TARGET_GROUPS, SELLING_POINTS, PRODUCT_TYPES, BRAND_KEYWORDS, get_semantic_segment_types, get_semantic_type_definitions, DEFAULT_SEMANTIC_SEGMENT_TYPES
 from sentence_transformers import SentenceTransformer, util
 import torch
 
@@ -355,7 +355,7 @@ class SemanticAnalyzer:
 
     def analyze_video_summary(self, full_transcript: str) -> Dict[str, Any]:
         """
-        使用DeepSeek模型分析视频完整转录文本，提取摘要、主要人群和产品类型。
+        使用DeepSeek模型分析视频完整转录文本，提取目标人群。
 
         Args:
             full_transcript: 完整的视频转录文本。
@@ -363,8 +363,7 @@ class SemanticAnalyzer:
         Returns:
             一个包含分析结果的字典，例如:
             {
-                "target_audience": ["人群1", "人群2"],
-                "product_type": ["产品类型A"]
+                "target_audience": ["人群1", "人群2"]
             }
             如果分析失败则返回空字典。
         """
@@ -374,68 +373,82 @@ class SemanticAnalyzer:
 
         import json # 确保导入json
         # 从config中导入TARGET_GROUPS，以便在提示词中使用
-        from streamlit_app.config.config import TARGET_GROUPS, PRODUCT_TYPES # 确保PRODUCT_TYPES也在此处导入
+        from streamlit_app.config.config import TARGET_GROUPS
 
-        product_types_json_array_for_prompt = json.dumps(PRODUCT_TYPES, ensure_ascii=False)
         target_groups_json_array_for_prompt = json.dumps(TARGET_GROUPS, ensure_ascii=False)
 
         # 使用f-string结合多行字符串来构建SYSTEM_PROMPT_TEMPLATE
         # 注意：在f-string中要表示字面量的花括号 { 或 }，需要使用双花括号 {{ 或 }}
-        SYSTEM_PROMPT_TEMPLATE = f'''你是一个专业的视频内容分析师，特别专长于分析母婴奶粉类视频内容。
-你的任务是根据用户提供的视频转录文本，提取视频的目标人群和产品类型。
-请严格按照以下JSON格式输出，确保所有字段都存在，即使内容为空数组或空字符串。
+        SYSTEM_PROMPT_TEMPLATE = f'''你是一个专业的母婴视频内容分析师，擅长精确识别视频的目标人群。
 
-对于识别产品类型，请特别注意以下几点：
-1. 产品可能以不同的表述方式出现，比如"启赋蕴淳"可能被称为"蕴淳"、"启赋家的蕴淳"、"启赋家最高端的奶粉"等。
-2. "启赋水奶"可能被表述为"水奶"、"液态奶"、"启赋的水奶"、"打开盖子就能喂"、"液体版"等。
-3. "启赋蓝钻"可能被表述为"蓝钻"、"启赋的蓝钻"等。
-4. 请根据上下文判断，如果提到"启赋"品牌，并且同时提到了"水奶"或"蕴淳"相关词汇，即使没有直接提到完整产品名称，也应该识别为相应的产品类型。
-5. 如果视频内容中提到"打开盖子就能喂"、"直接饮用"、"不需要冲调"等关于液态奶特性的描述，很可能是在讨论"启赋水奶"产品。
-6. 如果提到"高端"、"最高端"、"最好的"等词语与"启赋"一起出现，通常是在描述"启赋蕴淳"产品。
+你的任务是根据视频转录文本，从预定义的目标人群列表中选择**唯一一个最匹配**的分类。
 
-产品类型列表：{product_types_json_array_for_prompt}
-目标人群参考列表：{target_groups_json_array_for_prompt}
+目标人群列表及其详细定义：{target_groups_json_array_for_prompt}
 
-输出格式定义如下：
+**人群判断指导原则：**
+
+1. **孕期妈妈**：
+   - 关键词：怀孕、孕期、待产包、产检、建档、准妈妈、卸货、分娩、生产、产科
+   - 场景：讨论孕期营养、待产准备、产前产后护理、新生儿喂养准备
+   - 时间节点：怀孕期间、分娩前后、产后初期（0-42天）
+
+2. **二胎妈妈**：
+   - 关键词：二胎、老大、老二、两个孩子、大宝、二宝、再次怀孕
+   - 场景：比较两胎经验、多孩子养育、二胎备孕/怀孕
+
+3. **混养妈妈**：
+   - 关键词：混合喂养、混喂、亲喂、奶粉混合、母乳不足、奶量不够
+   - 场景：母乳与奶粉结合喂养、奶水不足补充
+
+4. **新手爸妈**：
+   - 关键词：新手、没有经验、第一次、新生儿、不知道怎么、学习、初次
+   - 场景：初为父母、缺乏育儿经验、学习喂养知识
+   - 包含：新手爸爸、新手妈妈、初次育儿的父母
+
+5. **贵妇妈妈**：
+   - 关键词：高端、奢华、精致、品质、贵、高价、进口、顶级
+   - 场景：追求高品质产品、注重品牌档次、消费能力强
+
+**优先级判断规则（按重要性排序）：**
+1. 如果同时匹配多个人群，按以下优先级选择：
+   - "二胎妈妈" > "孕期妈妈" > "混养妈妈" > "贵妇妈妈" > "新手爸妈"
+2. 如果提到"刚生完"、"产后"、"新生宝宝"、"出生后"等产后早期关键词，优先考虑"孕期妈妈"
+3. 如果明确提到"二胎"、"老大老二"等多孩经验，优先选择"二胎妈妈"
+4. 如果明确提到"混合喂养"、"奶水不足"等，优先选择"混养妈妈"
+5. 如果强调"高端"、"奢华"等品质追求，优先选择"贵妇妈妈"
+6. 其他情况或无明确特征时，选择"新手爸妈"
+
+**重要要求：**
+- **必须且只能**选择一个最匹配的人群
+- 不允许返回多个人群或空数组
+- 必须基于内容特征进行判断，不能随意选择
+
+输出格式：
 {{{{
-  "type": "object",
-  "properties": {{{{
-    "target_audience": {{{{
-      "type": "array",
-      "items": {{{{
-        "type": "string"
-      }}}},
-      "description": "视频针对的主要人群分类。请务必从上面提供的【目标人群参考列表】中选择一个或多个最匹配的分类。如果视频内容暗示了某个具体人群但该人群不在列表中，请选择列表中最能概括或最接近的分类。如果无法匹配到列表中的任何有效项，则返回空数组。"
-    }}}},
-    "product_type": {{{{
-      "type": "array",
-      "items": {{{{
-        "type": "string"
-      }}}},
-      "description": "视频中提到的产品类型，从【产品类型列表】中选择：{product_types_json_array_for_prompt}。即使只是暗示或间接提及，也应包括在内。"
-    }}}}
-  }}}},
-  "required": ["target_audience", "product_type"]
+  "target_audience": "从上述列表中选择的唯一一个人群分类"
 }}}}
 '''
 
         # 准备用户提示模板
-        user_prompt = f"""请根据以下视频转录文本进行分析，特别关注是否提到了启赋家族的产品：
+        user_prompt = f"""请仔细分析以下视频转录文本，识别出**唯一一个最匹配**的目标人群：
 
 --- 转录文本开始 ---
 {full_transcript}
 --- 转录文本结束 ---
 
-在分析时请特别留意：
-1. 识别出视频中提到的所有启赋产品类型，无论是直接提及还是间接暗示
-2. "启赋蕴淳"相关表述：蕴淳、启赋家最高端的奶粉、启赋的蕴淳、最好的启赋等
-3. "启赋水奶"相关表述：水奶、液态奶、启赋的水奶、打开盖子就能喂、液体版、不用冲调等
-4. 如果看到"蕴淳"、"水奶"这类关键词，且上下文中有提到"启赋"，请关联识别为相应产品类型
-5. 如果提到液态奶的特性（开盖即饮、方便外出等）或者高端奶粉特性，也请进行相应判断
+分析步骤：
+1. 仔细阅读转录文本，识别关键词和场景描述
+2. 对照人群判断指导原则，找出最匹配的人群特征
+3. 如果匹配多个人群，按照优先级规则选择最重要的一个
+4. 从目标人群列表中选择**唯一一个**最合适的分类
+5. 确保必须选择一个人群，不能返回空值
 
-请务必仔细分析整个转录文本，不要遗漏任何可能的产品类型提及。产品类型的识别是本次分析的关键任务。
+重要提醒：
+- 只能返回一个目标人群，不能返回多个
+- 必须是预定义列表中的人群名称
+- 基于内容特征做出最佳判断
 
-请以JSON格式输出分析结果，包含target_audience和product_type两个字段。
+请以JSON格式输出分析结果，确保target_audience字段是单个字符串值。
 """
 
         # 发送分析请求
@@ -464,57 +477,48 @@ class SemanticAnalyzer:
                 
                 try:
                     result_dict = json.loads(json_str)
-                    logger.info(f"成功解析视频内容分析结果: {result_dict}")
-                    return result_dict
+                    # 只返回目标人群信息
+                    return {
+                        "target_audience": result_dict.get("target_audience", "")
+                    }
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON解析失败: {e}, 原始文本: {json_str[:500]}...")
-            
-            # 如果上面的解析失败，尝试使用更宽松的方式提取产品类型
-            try:
-                # 检查是否有提到产品类型的文本片段
-                product_types = []
-                
-                # 检测启赋蕴淳
-                if "启赋蕴淳" in result_text or ("蕴淳" in result_text and "启赋" in result_text) or ("启赋" in result_text and "高端" in result_text):
-                    product_types.append("启赋蕴淳")
-                
-                # 检测启赋水奶
-                if "启赋水奶" in result_text or ("水奶" in result_text and "启赋" in result_text) or ("液态奶" in result_text and "启赋" in result_text) or ("打开盖子就能喂" in result_text):
-                    product_types.append("启赋水奶")
-                
-                # 检测启赋蓝钻
-                if "启赋蓝钻" in result_text or ("蓝钻" in result_text and "启赋" in result_text):
-                    product_types.append("启赋蓝钻")
-                
-                if product_types:
-                    return {
-                        "target_audience": [],
-                        "product_type": product_types
-                    }
                     
-                # 直接从转录文本中检查，作为最后的备选方案
-                product_types = []
-                
-                # 检测启赋蕴淳
-                if "启赋蕴淳" in full_transcript or ("蕴淳" in full_transcript and "启赋" in full_transcript) or ("启赋" in full_transcript and "高端" in full_transcript):
-                    product_types.append("启赋蕴淳")
-                
-                # 检测启赋水奶
-                if "启赋水奶" in full_transcript or ("水奶" in full_transcript and "启赋" in full_transcript) or ("液态奶" in full_transcript and "启赋" in full_transcript) or ("打开盖子就能喂" in full_transcript):
-                    product_types.append("启赋水奶")
-                
-                # 检测启赋蓝钻
-                if "启赋蓝钻" in full_transcript or ("蓝钻" in full_transcript and "启赋" in full_transcript):
-                    product_types.append("启赋蓝钻")
-                
-                if product_types:
-                    return {
-                        "target_audience": [],
-                        "product_type": product_types
-                    }
-            except Exception as e_fallback:
-                logger.error(f"备用提取产品类型失败: {e_fallback}")
-                
+                    # 尝试修复双花括号问题
+                    try:
+                        # 移除开头和结尾的多余花括号
+                        cleaned_json = json_str.strip()
+                        if cleaned_json.startswith('{{') and cleaned_json.endswith('}}'):
+                            cleaned_json = cleaned_json[1:-1]  # 移除外层花括号
+                            logger.info(f"尝试修复双花括号JSON格式: {cleaned_json[:200]}...")
+                            result_dict = json.loads(cleaned_json)
+                            return {
+                                "target_audience": result_dict.get("target_audience", "")
+                            }
+                    except json.JSONDecodeError as e2:
+                        logger.error(f"修复双花括号后仍然JSON解析失败: {e2}")
+                    
+                    # 如果JSON解析完全失败，尝试正则表达式提取目标人群
+                    try:
+                        import re
+                        # 尝试匹配 "target_audience": ["xxx", "yyy"] 格式
+                        pattern = r'"target_audience"\s*:\s*\[(.*?)\]'
+                        match = re.search(pattern, json_str, re.DOTALL)
+                        if match:
+                            audience_str = match.group(1)
+                            # 提取引号内的内容
+                            audience_pattern = r'"([^"]+)"'
+                            audiences = re.findall(audience_pattern, audience_str)
+                            logger.info(f"通过正则表达式提取到目标人群: {audiences}")
+                            return {
+                                "target_audience": audiences[0] if audiences else ""
+                            }
+                    except Exception as e3:
+                        logger.error(f"正则表达式提取目标人群失败: {e3}")
+                    
+                    return {}
+            
+            # 如果解析失败，返回空结果
             logger.error(f"无法从DeepSeek响应中提取结构化数据: {response}")
             return {}
             
@@ -605,29 +609,17 @@ class SemanticAnalyzer:
         preview_length = min(500, len(srt_text_for_llm))
         logger.info(f"准备传递给LLM的SRT文本预览 (前{preview_length}字符): {srt_text_for_llm[:preview_length]}...")
 
-        # 3. 构建类型描述
+        # 3. 构建类型描述（使用动态配置）
         type_description_list = []
-        for seg_type in SEMANTIC_SEGMENT_TYPES:
-            if seg_type == "广告开场":
-                type_description_list.append(f'- "{seg_type}": 视频的起始部分，用于吸引观众、引入品牌、Slogan或奠定视频基调。通常是视频的第一个独立语义单元。')
-            elif seg_type == "问题陈述":
-                type_description_list.append(f'- "{seg_type}": 描绘用户（通常是妈妈）在育儿过程中遇到的痛点、困扰，或宝宝在成长、喂养、健康方面面临的具体问题、挑战。也包括通过场景对比、情景再现等方式引发观众对相关问题的共鸣。')
-            elif seg_type == "产品介绍":
-                type_description_list.append(f'- "{seg_type}": 详细介绍产品的核心特性、主要成分、配方技术、规格参数、设计特点、原料来源等客观信息，并自然过渡到这些特性所带来的直接益处和功效。强调产品\\"是什么\\"以及它\\"能带来什么基础效果\\"。')
-            elif seg_type == "产品优势":
-                type_description_list.append(f'- "{seg_type}": 强调产品与同类竞品相比的独特之处、核心竞争力或特殊价值。例如\\"独有配方\\"、\\"专利技术\\"、\\"更好吸收\\"、\\"更安全\\"等对比性或优越性表述。')
-            elif seg_type == "行动号召":
-                type_description_list.append(f'- "{seg_type}": 明确引导或鼓励用户采取具体行动，如\\"立即购买\\"、\\"扫码了解更多\\"、\\"参与活动\\"、\\"领取优惠\\"等直接指令性话语。')
-            elif seg_type == "用户反馈":
-                type_description_list.append(f'- "{seg_type}": 直接或间接展示来自真实用户的评价、使用体验、推荐语或使用前后的对比故事。通常带有主观色彩和用户口吻。')
-            elif seg_type == "专家背书":
-                type_description_list.append(f'- "{seg_type}": 视频中出现明确的专家身份（如医生、营养师、科学家、育儿博主）或权威机构，并由他们对产品进行推荐、肯定、解释原理或验证效果。强调\\"谁说\\"的重要性。')
-            elif seg_type == "品牌理念":
-                type_description_list.append(f'- "{seg_type}": 传递品牌的核心价值观、使命、愿景、对消费者的承诺、品牌故事或其在行业中的定位和追求。通常较为抽象和概括性，区别于具体的\\"产品介绍\\"。可能出现在开场、结尾或穿插于视频中。')
-            elif seg_type == "总结收尾":
-                type_description_list.append(f'- "{seg_type}": 视频的结束部分，对前面内容进行概括、再次强调核心卖点或品牌信息，或给出明确的结束语、感谢语。')
-            elif seg_type == "其他":
-                type_description_list.append(f'- "{seg_type}": 用于标记那些无法明确归入以上任何特定类别的、独立的文本内容。应尽量少用，仅在确实无法分类时使用。')
+        semantic_segment_types = get_semantic_segment_types()
+        semantic_definitions = get_semantic_type_definitions()
+        
+        for seg_type in semantic_segment_types:
+            definition = semantic_definitions.get(seg_type, {})
+            description = definition.get('description', f'{seg_type}类型的内容')
+            
+            type_description_list.append(f'- "{seg_type}": {description}')
+        
         type_descriptions_formatted_str = "\n".join(type_description_list)
 
         # 4. 调用DeepSeek API进行语义分段
@@ -663,7 +655,7 @@ class SemanticAnalyzer:
                         logger.warning(f"LLM返回的区块定义缺少 start_line_id 或 end_line_id: {segment_def}")
                         continue
 
-                    if segment_type not in SEMANTIC_SEGMENT_TYPES:
+                    if segment_type not in semantic_segment_types:
                         logger.warning(f"LLM返回了未知的语义类型 '{segment_type}', 将其归类为 '其他'. 区块: {segment_def}")
                         segment_type = "其他"
                     
@@ -872,6 +864,166 @@ class IntentAnalyzer:
         seconds = int(seconds % 60)
         
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def analyze_segments(self, segments_data):
+        """
+        批量分析音频片段数据，将每个片段归类到特定的语义分类中。
+
+        Args:
+            segments_data (list): 包含多个音频片段的列表，每个片段应该有 'text' 字段。
+
+        Returns:
+            list: 包含分析结果的列表，每个元素对应一个片段的分类结果。
+        """
+        if not segments_data:
+            logger.warning("没有提供音频片段数据。")
+            return []
+
+        from streamlit_app.config.config import get_semantic_type_definitions, DEFAULT_SEMANTIC_SEGMENT_TYPES
+
+        # 动态获取语义类型定义
+        semantic_definitions = get_semantic_type_definitions()
+        available_types = DEFAULT_SEMANTIC_SEGMENT_TYPES
+
+        logger.info(f"开始分析 {len(segments_data)} 个音频片段，语义类型数量: {len(available_types)}")
+
+        results = []
+        for i, segment in enumerate(segments_data):
+            segment_text = segment.get('text', '')
+            if not segment_text:
+                logger.warning(f"片段 {i} 没有文本内容，跳过分析。")
+                results.append({
+                    'segment_index': i,
+                    'text': segment_text,
+                    'semantic_type': '其他',
+                    'confidence': 0.0,
+                    'analysis_result': '文本为空'
+                })
+                continue
+
+            try:
+                # 构建动态的类型描述
+                type_descriptions = []
+                for type_name in available_types:
+                    definition = semantic_definitions.get(type_name, {})
+                    description = definition.get('description', f'{type_name}类型的内容')
+                    keywords = definition.get('keywords', [])
+                    examples = definition.get('examples', [])
+                    
+                    # 组合描述信息
+                    full_description = f"{type_name}: {description}"
+                    if keywords:
+                        full_description += f" 关键词：{', '.join(keywords[:3])}"  # 只显示前3个关键词
+                    if examples:
+                        full_description += f" 示例：{examples[0]}"  # 只显示第一个示例
+                    
+                    type_descriptions.append(full_description)
+
+                # 构建系统提示词
+                system_prompt = f"""你是一个专业的视频内容分析师，擅长将母婴奶粉营销视频的文本片段归类到合适的语义类型中。
+
+可选的语义类型及其定义：
+{chr(10).join([f"{i+1}. {desc}" for i, desc in enumerate(type_descriptions)])}
+
+请根据文本内容，选择最合适的语义类型。如果文本内容不明确或难以归类，请选择"其他"。
+
+返回格式要求：
+- semantic_type: 选择的语义类型名称（必须是上述类型之一）
+- confidence: 置信度（0.0-1.0之间的浮点数）
+- reasoning: 简短的分析理由
+
+请以JSON格式返回结果。"""
+
+                user_prompt = f"请分析以下文本片段的语义类型：\n\n文本内容：{segment_text}"
+
+                # 调用DeepSeek API
+                response = self.deepseek_client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=500,
+                    stream=False
+                )
+
+                response_content = response.choices[0].message.content.strip()
+                logger.debug(f"片段 {i} DeepSeek API 响应: {response_content}")
+
+                # 解析JSON响应
+                try:
+                    result_json = json.loads(response_content)
+                    semantic_type = result_json.get('semantic_type', '其他')
+                    confidence = float(result_json.get('confidence', 0.5))
+                    reasoning = result_json.get('reasoning', '自动分析')
+
+                    # 验证语义类型是否在可选范围内
+                    if semantic_type not in available_types:
+                        logger.warning(f"片段 {i} 返回了无效的语义类型 '{semantic_type}'，设置为'其他'")
+                        semantic_type = '其他'
+                        confidence = 0.3
+
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.error(f"片段 {i} JSON解析失败: {e}, 原始响应: {response_content}")
+                    # 尝试简单的文本匹配作为后备
+                    semantic_type = self._fallback_semantic_classification(segment_text, available_types, semantic_definitions)
+                    confidence = 0.4
+                    reasoning = "JSON解析失败，使用后备分类"
+
+                results.append({
+                    'segment_index': i,
+                    'text': segment_text,
+                    'semantic_type': semantic_type,
+                    'confidence': confidence,
+                    'analysis_result': reasoning
+                })
+
+                logger.info(f"片段 {i} 分析完成: {semantic_type} (置信度: {confidence:.2f})")
+
+            except Exception as e:
+                logger.error(f"分析片段 {i} 时发生错误: {e}")
+                results.append({
+                    'segment_index': i,
+                    'text': segment_text,
+                    'semantic_type': '其他',
+                    'confidence': 0.0,
+                    'analysis_result': f'分析失败: {str(e)}'
+                })
+
+        logger.info(f"完成所有 {len(segments_data)} 个片段的语义分析")
+        return results
+
+    def _fallback_semantic_classification(self, text: str, available_types: list, semantic_definitions: dict) -> str:
+        """
+        后备的语义分类方法，基于关键词匹配
+        
+        Args:
+            text: 要分类的文本
+            available_types: 可用的语义类型列表
+            semantic_definitions: 语义类型定义字典
+            
+        Returns:
+            str: 分类结果
+        """
+        text_lower = text.lower()
+        
+        # 按类型检查关键词匹配
+        for type_name in available_types:
+            if type_name == '其他':
+                continue
+                
+            definition = semantic_definitions.get(type_name, {})
+            keywords = definition.get('keywords', [])
+            
+            # 检查关键词匹配
+            for keyword in keywords:
+                if keyword.lower() in text_lower:
+                    logger.info(f"后备分类：基于关键词 '{keyword}' 将文本分类为 '{type_name}'")
+                    return type_name
+        
+        # 如果没有匹配到任何关键词，返回"其他"
+        return '其他'
 
 def main_analysis_pipeline(video_path, target_audience=None, product_type=None, selling_points_config_representation=None, additional_info=None):
     """

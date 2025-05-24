@@ -14,7 +14,7 @@ if __name__ == "__main__":
     os.environ["PYTHONPATH"] = os.getcwd()
     
     # 使用subprocess启动Streamlit应用
-    streamlit_app_path = os.path.join(os.path.dirname(__file__), "streamlit_app", "app.py")
+    streamlit_app_path = os.path.join(os.path.dirname(__file__), "streamlit_app", "🔍_分析.py")
     
     try:
         subprocess.run(["streamlit", "run", streamlit_app_path], check=True)

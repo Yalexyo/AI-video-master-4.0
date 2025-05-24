@@ -13,54 +13,20 @@ from typing import List, Dict, Any, Tuple
 import streamlit as st
 from pathlib import Path
 
-from streamlit_app.config.config import PRODUCT_TYPES, SELLING_POINTS, get_config
+from streamlit_app.config.config import get_config
 
 # 设置日志
 logger = logging.getLogger(__name__)
 
-class SegmentAnalyzer:
-    """片段分析器，专门用于分析单个视频片段的产品类型和核心卖点"""
-    
-    def __init__(self):
-        """初始化片段分析器"""
-        config = get_config()
-        self.api_key = config.get("api_key") or "sk-test-api-key-for-development-only"
-        self.base_url = "https://api.deepseek.com"
-        self.model = "deepseek-chat"
-        
-        # 导入requests库
-        try:
-            import requests
-            self.requests = requests
-        except ImportError:
-            logger.error("请安装requests库: pip install requests")
-            raise ImportError("缺少必要的requests库")
-        
-        logger.info("片段分析器初始化完成")
-    
-    def analyze_single_segment(self, segment_text: str, semantic_type: str) -> Dict[str, Any]:
-        """
-        分析单个片段，提取产品类型和核心卖点
-        
-        Args:
-            segment_text: 片段文本内容
-            semantic_type: 片段的语义类型
-            
-        Returns:
-            包含分析结果的字典: {"product_type": str, "selling_points": List[str]}
-        """
-        if not segment_text or not segment_text.strip():
-            return {"product_type": "", "selling_points": []}
-        
-        # 构建针对产品类型和卖点识别的专业提示词
-        system_prompt = f"""你是一个专业的母婴奶粉产品分析专家。你的任务是分析视频片段文本，准确识别以下信息：
+# 默认分析提示词模板
+DEFAULT_ANALYSIS_PROMPT = """你是一个专业的母婴奶粉产品分析专家。你的任务是分析视频片段文本，准确识别以下信息：
 
-1. 【产品类型】: 从文本中识别具体提到的奶粉产品类型，可选项目包括：{json.dumps(PRODUCT_TYPES, ensure_ascii=False)}
+1. 【产品类型】: 从文本中识别具体提到的奶粉产品类型，可选项目包括：{product_types}
    - 只有在文本中明确提到或暗示特定产品时才输出产品类型
    - 每个片段最多只能识别1种产品类型
    - 如果没有明确的产品信息，则输出空字符串
 
-2. 【核心卖点】: 从文本中识别提到的产品核心卖点，可选项目包括：{json.dumps(SELLING_POINTS, ensure_ascii=False)}
+2. 【核心卖点】: 从文本中识别提到的产品核心卖点，可选项目包括：{selling_points}
    - 可以识别多个卖点
    - 只有在文本中明确提到或暗示相关概念时才输出
    - 如果没有相关卖点信息，则输出空数组
@@ -78,6 +44,50 @@ class SegmentAnalyzer:
   "product_type": "启赋水奶", 
   "selling_points": ["HMO & 母乳低聚糖", "开盖即饮"]
 }}"""
+
+class SegmentAnalyzer:
+    """片段分析器，专门用于分析单个视频片段的产品类型和核心卖点"""
+    
+    def __init__(self):
+        """初始化片段分析器"""
+        config = get_config()
+        self.api_key = config.get("api_key") or "sk-test-api-key-for-development-only"
+        self.base_url = "https://api.deepseek.com"
+        self.model = "deepseek-chat"
+        
+        # 动态获取配置
+        self.product_types = config.get("PRODUCT_TYPES", ["启赋水奶", "启赋蕴淳", "启赋蓝钻"])
+        self.selling_points = config.get("SELLING_POINTS", ["HMO & 母乳低聚糖", "自愈力", "品牌实力", "A2奶源", "开盖即饮", "精准配比"])
+        self.analysis_prompt = config.get("ANALYSIS_PROMPT", DEFAULT_ANALYSIS_PROMPT)
+        
+        # 导入requests模块
+        try:
+            import requests
+            self.requests = requests
+            logger.info("片段分析器初始化完成")
+        except ImportError as e:
+            logger.error(f"导入requests模块失败: {e}")
+            raise
+
+    def analyze_single_segment(self, segment_text: str, semantic_type: str) -> Dict[str, Any]:
+        """
+        分析单个视频片段，识别产品类型和核心卖点
+        
+        Args:
+            segment_text: 片段文本内容
+            semantic_type: 片段的语义类型
+            
+        Returns:
+            包含分析结果的字典: {"product_type": str, "selling_points": List[str]}
+        """
+        if not segment_text or not segment_text.strip():
+            return {"product_type": "", "selling_points": []}
+        
+        # 使用用户自定义的prompt模板
+        system_prompt = self.analysis_prompt.format(
+            product_types=json.dumps(self.product_types, ensure_ascii=False),
+            selling_points=json.dumps(self.selling_points, ensure_ascii=False)
+        )
 
         user_prompt = f"""请分析以下视频片段文本（语义类型：{semantic_type}），识别其中的产品类型和核心卖点：
 
@@ -128,12 +138,12 @@ class SegmentAnalyzer:
                 selling_points = analysis_result.get("selling_points", [])
                 
                 # 确保产品类型在允许列表中
-                if product_type and product_type not in PRODUCT_TYPES:
+                if product_type and product_type not in self.product_types:
                     logger.warning(f"识别到未知产品类型: {product_type}，将其置为空")
                     product_type = ""
                 
                 # 确保卖点在允许列表中
-                valid_selling_points = [sp for sp in selling_points if sp in SELLING_POINTS]
+                valid_selling_points = [sp for sp in selling_points if sp in self.selling_points]
                 if len(valid_selling_points) != len(selling_points):
                     logger.warning(f"过滤了一些无效的卖点，原始: {selling_points}，有效: {valid_selling_points}")
                 

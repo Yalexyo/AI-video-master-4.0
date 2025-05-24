@@ -46,11 +46,7 @@ def save_detailed_segments_metadata(all_videos_analysis_data, root_dir, logger):
         original_video_id = video_data.get("video_id", "N/A")
         semantic_segments = video_data.get("semantic_segments", {})
         
-        # 修正：确保从 video_data 中获取产品类型时使用 "product_types" 键
-        llm_analyzed_product_types = video_data.get("product_types", []) # 默认为空列表
-        product_types_str = ", ".join(llm_analyzed_product_types) if llm_analyzed_product_types else "未知"
-        
-        # 新增：获取目标人群信息
+        # 修正：确保从 video_data 中获取目标人群时使用 "target_audiences" 键
         llm_analyzed_target_audiences = video_data.get("target_audiences", []) # 默认为空列表  
         target_audiences_str = ", ".join(llm_analyzed_target_audiences) if llm_analyzed_target_audiences else "未知"
 
@@ -87,8 +83,8 @@ def save_detailed_segments_metadata(all_videos_analysis_data, root_dir, logger):
                     # 保留 start_time_ms 和 end_time_ms 以便 SRT 生成更精确
                     "start_time_ms": start_time_ms,
                     "end_time_ms": end_time_ms,
-                    "product_types": product_types_str, # 新增产品类型字段
-                    "target_audiences": target_audiences_str # 新增目标人群字段
+                    # 移除视频级产品类型字段，因为现在只在片段级分析产品类型
+                    "target_audiences": target_audiences_str # 保留目标人群字段（视频级分析）
                 })
     
     if not current_run_segments_metadata:
