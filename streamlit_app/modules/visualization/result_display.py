@@ -82,6 +82,7 @@ def update_segment_transcript(filename, new_transcript):
 def regenerate_srt_for_segment(segment_metadata):
     """
     为单个片段重新生成SRT文件
+    🆕 修复：现在保持原始视频的时间偏移
     
     Args:
         segment_metadata: 片段的元数据字典
@@ -100,12 +101,16 @@ def regenerate_srt_for_segment(segment_metadata):
             logger.warning(f"片段 {filename} 的转录文本为空，跳过SRT生成")
             return
         
-        # 计算片段时长
-        duration_ms = end_time_ms - start_time_ms if end_time_ms > start_time_ms else 5000  # 默认5秒
+        # 🆕 修复：使用原始视频的时间偏移，而不是从00:00:00开始
+        original_start_seconds = start_time_ms / 1000.0
+        original_end_seconds = end_time_ms / 1000.0
         
-        # 生成SRT内容（从0开始计时）
+        # 生成SRT内容（保持原始视频时间偏移）
+        srt_start_time = format_seconds_to_srt(original_start_seconds)
+        srt_end_time = format_seconds_to_srt(original_end_seconds)
+        
         srt_content = f"""1
-00:00:00,000 --> {format_duration_to_srt(duration_ms)}
+{srt_start_time} --> {srt_end_time}
 {transcript}
 
 """
@@ -121,14 +126,34 @@ def regenerate_srt_for_segment(segment_metadata):
         with open(srt_file_path, 'w', encoding='utf-8') as f:
             f.write(srt_content)
         
-        logger.info(f"已为片段 {filename} 重新生成SRT文件: {srt_file_path}")
+        logger.info(f"已为片段 {filename} 重新生成SRT文件: {srt_file_path} (时间: {srt_start_time} --> {srt_end_time})")
         
     except Exception as e:
         st.error(f"重新生成SRT文件失败: {str(e)}")
 
+def format_seconds_to_srt(seconds):
+    """
+    将秒数转换为SRT时间格式
+    
+    Args:
+        seconds: 秒数（浮点数）
+        
+    Returns:
+        SRT格式的时间字符串 (HH:MM:SS,mmm)
+    """
+    total_seconds = int(seconds)
+    milliseconds = int((seconds - total_seconds) * 1000)
+    
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds_part = total_seconds % 60
+    
+    return f"{hours:02d}:{minutes:02d}:{seconds_part:02d},{milliseconds:03d}"
+
 def format_duration_to_srt(duration_ms):
     """
     将毫秒时长转换为SRT时间格式
+    🚨 已弃用：请使用 format_seconds_to_srt() 并传入原始视频时间偏移
     
     Args:
         duration_ms: 毫秒时长

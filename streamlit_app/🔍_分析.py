@@ -558,15 +558,18 @@ if analyze_button and st.session_state.video_files:
                                 for semantic_type, segments in video_data.get("semantic_segments", {}).items():
                                     for segment in segments:
                                         # 准备片段数据用于分析
-                                        segment_for_analysis = {
-                                            "text": segment.get("text", ""),
-                                            "transcript": segment.get("asr_matched_text", ""),
-                                            "semantic_type": segment.get("semantic_type", semantic_type),
-                                            "video_id": video_data.get("video_id", ""),
-                                            "start_time": segment.get("start_time", 0),
-                                            "end_time": segment.get("end_time", 0)
+                                        segment_data = {
+                                            'semantic_type': semantic_type,
+                                            'start_time': segment.get('start_time_ms', 0.0) / 1000.0,
+                                            'end_time': segment.get('end_time_ms', 0.0) / 1000.0,
+                                            'time_period': segment.get('time_info', ''),
+                                            'text': segment.get('transcript', ''),
+                                            'confidence': 1.0,
+                                            'analyzed_product_type': segment.get('analyzed_product_type', '未识别'),
+                                            'analyzed_selling_points': segment.get('analyzed_selling_points', []),
+                                            'file_path': os.path.join(ROOT_DIR, "data", "output", semantic_type, segment.get('filename', ''))
                                         }
-                                        all_segments_for_analysis.append(segment_for_analysis)
+                                        all_segments_for_analysis.append(segment_data)
                             
                             if all_segments_for_analysis:
                                 logger.info(f"开始分析 {len(all_segments_for_analysis)} 个片段...")
@@ -755,9 +758,13 @@ if complete_analysis_data:
                         'selling_points': segment.get('analyzed_selling_points', [])
                     }
                     
-                    # 构建文件路径，使用全局索引
-                    segment_filename = f"{video_id}_semantic_seg_{idx}_{semantic_type}.mp4"
-                    segment_data['file_path'] = os.path.join(ROOT_DIR, "data", "output", semantic_type, segment_filename)
+                    # 直接使用segment中已有的file_path，如果没有则构建
+                    if 'file_path' in segment and segment['file_path']:
+                        segment_data['file_path'] = segment['file_path']
+                    else:
+                        # 构建文件路径，使用全局索引
+                        segment_filename = f"{video_id}_semantic_seg_{idx}_{semantic_type}.mp4"
+                        segment_data['file_path'] = os.path.join(ROOT_DIR, "data", "output", semantic_type, segment_filename)
                     
                     all_segments.append(segment_data)
             elif isinstance(semantic_segments, list):
@@ -784,6 +791,14 @@ if complete_analysis_data:
             
             if all_segments:
                 st.markdown(f"#### 🎬 视频: {video_id} ({len(all_segments)} 个片段)")
+                
+                # 调试信息：显示文件路径
+                with st.expander("🔍 调试信息 - 文件路径", expanded=False):
+                    for i, seg in enumerate(all_segments[:3]):  # 只显示前3个
+                        st.write(f"片段 {i+1}:")
+                        st.write(f"  语义类型: {seg.get('semantic_type')}")
+                        st.write(f"  文件路径: {seg.get('file_path')}")
+                        st.write(f"  文件存在: {os.path.exists(seg.get('file_path', ''))}")
                 
                 # 渲染片段编辑器（表格形式）
                 updated_segments = segment_editor.render_segment_list(all_segments, video_id)
