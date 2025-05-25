@@ -186,17 +186,17 @@ def _seconds_to_srt_time_format(total_seconds: float) -> str:
 def create_srt_files_for_segments(root_dir, logger):
     """
     根据 video_segments_metadata.json 为每个片段创建 SRT 字幕文件。
-    SRT 文件将保存在 data/output/{语义类型}/{segment_filename_without_ext}.srt
-    
-    🆕 修复：SRT文件现在保持原始视频的时间偏移，而不是从00:00:00重新开始
+    SRT 文件将保存在 data/output/{语义类型}/{original_video_id}/{segment_filename_without_ext}.srt
 
     Args:
         root_dir (Path or str): 项目的根目录。
         logger: 日志记录器实例。
     """
     root_dir = Path(root_dir)
-    output_dir = root_dir / "data" / "output"
+    # paths_config = get_paths_config() # 不再需要 transcripts_dir
+    output_dir = root_dir / "data" / "output" # SRT文件将直接保存到 output 目录下的相应结构中
     metadata_file_path = output_dir / "video_segments_metadata.json"
+    # transcripts_base_dir = Path(paths_config.get("transcripts_dir")) # 移除这一行
 
     if not metadata_file_path.exists():
         logger.warning(f"元数据文件 {metadata_file_path} 不存在，无法生成 SRT 文件。")
@@ -221,39 +221,58 @@ def create_srt_files_for_segments(root_dir, logger):
             time_info_str = segment_meta.get("time_info") # "HH:MM:SS.mmm - HH:MM:SS.mmm"
             transcript_text = segment_meta.get("transcript")
             semantic_type = segment_meta.get("type") # 获取语义类型
-            start_time_ms = segment_meta.get("start_time_ms")
-            end_time_ms = segment_meta.get("end_time_ms")
 
-            if not all([segment_filename, original_video_id, transcript_text, semantic_type]):
+            if not all([segment_filename, original_video_id, time_info_str, transcript_text, semantic_type]):
                 logger.warning(f"片段元数据不完整，跳过 SRT 生成: {segment_meta.get('filename', '未知文件名')}")
                 continue
 
-            # 🆕 修复：使用原始视频中的实际时间，而不是从0开始
+            # 解析时间信息
+            time_parts = time_info_str.split(" - ")
+            if len(time_parts) != 2:
+                logger.warning(f"时间信息格式不正确 '{time_info_str}' for {segment_filename}，跳过 SRT 生成。")
+                continue
+            
+            # 片段在原视频中的开始和结束时间（秒）
+            # segment_start_in_original_seconds = _time_str_to_seconds(time_parts[0])
+            # segment_end_in_original_seconds = _time_str_to_seconds(time_parts[1])
+            # segment_duration_seconds = segment_end_in_original_seconds - segment_start_in_original_seconds
+            
+            # 直接使用 format_ms_time 返回的 HH:MM:SS.mmm 作为片段时长
+            # 需要从 metadata_processor.py 中导入 format_ms_time，或者重新实现其逻辑
+            # 这里我们假设 time_info 已经是 "start_time - end_time" (均为毫秒)
+            # 假设元数据中的 time_info 是 "HH:MM:SS.mmm - HH:MM:SS.mmm" (表示在原视频中的时间)
+            # 我们需要的是片段自身的时长
+            
+            # 修正： 从元数据获取 start_time_ms 和 end_time_ms (假设它们是以毫秒为单位存在)
+            # 如果没有，则需要从 "HH:MM:SS.mmm - HH:MM:SS.mmm" 解析
+            start_time_ms = segment_meta.get("start_time_ms")
+            end_time_ms = segment_meta.get("end_time_ms")
+
+            segment_duration_seconds = 0
             if start_time_ms is not None and end_time_ms is not None:
-                # 使用毫秒时间戳
-                original_start_seconds = float(start_time_ms) / 1000.0
-                original_end_seconds = float(end_time_ms) / 1000.0
-            elif time_info_str and " - " in time_info_str:
-                # 从时间字符串解析
-                time_parts = time_info_str.split(" - ")
-                if len(time_parts) != 2:
-                    logger.warning(f"时间信息格式不正确 '{time_info_str}' for {segment_filename}，跳过 SRT 生成。")
-                    continue
-                original_start_seconds = _time_str_to_seconds(time_parts[0])
-                original_end_seconds = _time_str_to_seconds(time_parts[1])
+                 segment_duration_seconds = (float(end_time_ms) - float(start_time_ms)) / 1000.0
+            elif isinstance(time_info_str, str) and " - " in time_info_str:
+                 original_start_seconds = _time_str_to_seconds(time_parts[0])
+                 original_end_seconds = _time_str_to_seconds(time_parts[1])
+                 segment_duration_seconds = original_end_seconds - original_start_seconds
             else:
-                logger.warning(f"无法获取时间信息 for {segment_filename}，跳过 SRT 生成。")
+                logger.warning(f"无法确定片段时长 for {segment_filename} from time_info: {time_info_str} or ms times. 跳过。")
                 continue
 
-            # 🆕 关键修复：SRT文件保持原始视频的时间偏移
-            srt_start_time = _seconds_to_srt_time_format(original_start_seconds)
-            srt_end_time = _seconds_to_srt_time_format(original_end_seconds)
+            if segment_duration_seconds <= 0:
+                logger.warning(f"计算得到的片段时长为零或负数 for {segment_filename} ({segment_duration_seconds}s)，跳过 SRT 生成。")
+                continue
 
-            # 生成SRT内容，使用原始视频的时间戳
+            srt_start_time = "00:00:00,000"
+            srt_end_time = _seconds_to_srt_time_format(segment_duration_seconds)
+
             srt_content = f"1\n{srt_start_time} --> {srt_end_time}\n{transcript_text}\n\n"
 
             # 构建SRT文件的目标路径
-            srt_parent_dir = output_dir / semantic_type
+            # 旧路径: srt_parent_dir = transcripts_base_dir / semantic_type / original_video_id
+            # 新路径: srt_parent_dir 直接在 output_dir 下构建，并且SRT文件与MP4文件同级，都在 {semantic_type} 文件夹下
+            # 因此 srt_parent_dir 应该是 output_dir / semantic_type
+            srt_parent_dir = output_dir / semantic_type # 修正：移除 original_video_id 这一层
             srt_parent_dir.mkdir(parents=True, exist_ok=True)
 
             srt_filename = Path(segment_filename).stem + ".srt"
@@ -261,16 +280,15 @@ def create_srt_files_for_segments(root_dir, logger):
 
             with open(srt_file_path, 'w', encoding='utf-8') as f:
                 f.write(srt_content)
-            
+            # logger.info(f"已生成 SRT 文件: {srt_file_path}") # 减少日志量
             srt_files_created_count += 1
-            logger.debug(f"已生成SRT文件: {srt_file_path} (时间: {srt_start_time} --> {srt_end_time})")
 
         except Exception as e:
             logger.error(f"为片段 {segment_meta.get('filename', '未知')} 生成 SRT 时出错: {e}", exc_info=True)
             continue
     
     if srt_files_created_count > 0:
-        logger.info(f"SRT 文件生成完成。共创建 {srt_files_created_count} 个 SRT 文件，现在保持原始视频时间偏移。")
+        logger.info(f"SRT 文件生成完成。共创建 {srt_files_created_count} 个 SRT 文件。")
     else:
         logger.info("没有新的 SRT 文件被创建（可能元数据为空或已处理）。")
 
