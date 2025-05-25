@@ -232,11 +232,27 @@ def transcribe_audio(audio_path, hotword_id=None, output_dir=None):
         
         vp = VideoProcessor()
         
-        # 上传到OSS获取URL
-        audio_url = vp._upload_to_accessible_url(audio_path)
+        # 上传到OSS获取URL，如果失败则重试
+        audio_url = None
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            try:
+                audio_url = vp._upload_to_accessible_url(audio_path, expiration=7200)  # 2小时过期时间
+                if audio_url:
+                    logger.info(f"OSS上传成功 (尝试 {attempt + 1}/{max_retries}): {audio_url[:50]}...")
+                    break
+                else:
+                    logger.warning(f"OSS上传失败 (尝试 {attempt + 1}/{max_retries})")
+            except Exception as e:
+                logger.error(f"OSS上传异常 (尝试 {attempt + 1}/{max_retries}): {e}")
+            
+            if attempt < max_retries - 1:
+                time.sleep(2)  # 等待2秒后重试
+        
         if not audio_url:
-            logger.warning("上传到OSS失败，将使用本地路径")
-            audio_url = audio_path
+            logger.error("OSS上传多次失败，无法继续转录。请检查OSS配置和网络连接。")
+            return None
         
         # 使用SDK直接调用
         logger.info(f"使用DashScope SDK转录音频，热词ID: {hotword_id}")

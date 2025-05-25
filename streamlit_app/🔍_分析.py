@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 import logging # 添加logging导入
 import shutil # 添加shutil导入
+from datetime import datetime
 # import json # 不再直接在此处使用json来保存元数据
 
 # 配置日志
@@ -215,6 +216,63 @@ st.markdown("""
         border-radius: 4px !important;
         padding: 5px 10px !important;
         font-size: 0.85em !important;
+    }
+    
+    /* 🆕 片段编辑器表格样式 */
+    .segment-editor-table {
+        border: 1px solid #e6e6e6;
+        border-radius: 8px;
+        padding: 10px;
+        margin: 10px 0;
+        background-color: #fafafa;
+    }
+    
+    .segment-row {
+        padding: 8px 0;
+        border-bottom: 1px solid #e6e6e6;
+    }
+    
+    .segment-row:last-child {
+        border-bottom: none;
+    }
+    
+    .segment-row:hover {
+        background-color: #f0f2f6;
+        border-radius: 4px;
+    }
+    
+    .segment-file-button {
+        background-color: #f8f9fa !important;
+        border: 1px solid #dee2e6 !important;
+        color: #495057 !important;
+        font-size: 0.85em !important;
+        padding: 4px 8px !important;
+        border-radius: 4px !important;
+    }
+    
+    .segment-file-button:hover {
+        background-color: #e9ecef !important;
+        border-color: #adb5bd !important;
+    }
+    
+    .segment-modified {
+        color: #28a745;
+        font-style: italic;
+        font-size: 0.85em;
+    }
+    
+    /* 紧凑的输入框样式 */
+    .stNumberInput > div > div > input {
+        height: 35px !important;
+        font-size: 0.85em !important;
+    }
+    
+    .stMultiSelect > div > div {
+        min-height: 35px !important;
+    }
+    
+    .stSelectbox > div > div {
+        min-height: 35px !important;
     }
 </style>""", unsafe_allow_html=True)
 
@@ -586,9 +644,178 @@ if analyze_button and st.session_state.video_files:
             else:
                 logger.warning("分析后没有有效的分析数据可用于保存元数据。all_videos_analysis_data 为空或不存在。")
 
-# 总是尝试调用 display_results_interface。
-# 它会从 video_segments_metadata.json 加载数据。
-display_results_interface(analysis_results=st.session_state.get('all_videos_analysis_data'))
+# 🆕 片段编辑器 - 作为主要功能
+# 总是尝试加载完整的数据（包括新分析和历史数据）
+def load_complete_analysis_data():
+    """加载完整的分析数据，包括新分析和历史数据"""
+    complete_data = {}
+    
+    # 1. 首先加载历史数据
+    try:
+        import json
+        metadata_file = "data/output/video_segments_metadata.json"
+        if os.path.exists(metadata_file):
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+            
+            if metadata:
+                logger.info(f"从元数据文件加载了 {len(metadata)} 个片段的历史数据")
+                
+                # 转换元数据为标准格式
+                for segment in metadata:
+                    video_id = segment.get('original_video_id', 'unknown')
+                    if video_id not in complete_data:
+                        complete_data[video_id] = {
+                            'video_id': video_id,
+                            'video_path': segment.get('video_path', ''),
+                            'semantic_segments': {},
+                            'target_audiences': [segment.get('target_audiences', '新手爸妈')]
+                        }
+                    
+                    semantic_type = segment.get('type', '其他')
+                    if semantic_type not in complete_data[video_id]['semantic_segments']:
+                        complete_data[video_id]['semantic_segments'][semantic_type] = []
+                    
+                    segment_data = {
+                        'semantic_type': semantic_type,
+                        'start_time': segment.get('start_time_ms', 0.0) / 1000.0,
+                        'end_time': segment.get('end_time_ms', 0.0) / 1000.0,
+                        'time_period': segment.get('time_info', ''),
+                        'text': segment.get('transcript', ''),
+                        'confidence': 1.0,
+                        'analyzed_product_type': segment.get('analyzed_product_type', '未识别'),
+                        'analyzed_selling_points': segment.get('analyzed_selling_points', []),
+                        'file_path': os.path.join(ROOT_DIR, "data", "output", semantic_type, segment.get('filename', ''))
+                    }
+                    
+                    complete_data[video_id]['semantic_segments'][semantic_type].append(segment_data)
+    except Exception as e:
+        logger.error(f"加载历史数据失败: {e}")
+    
+    # 2. 然后合并新分析的数据（如果有的话）
+    if st.session_state.get('all_videos_analysis_data'):
+        logger.info(f"合并新分析的 {len(st.session_state.all_videos_analysis_data)} 个视频数据")
+        
+        for video_data in st.session_state.all_videos_analysis_data:
+            video_id = video_data.get("video_id", "unknown")
+            
+            # 如果是新视频，直接添加；如果是已存在的视频，更新数据
+            complete_data[video_id] = video_data
+    
+    return list(complete_data.values())
+
+# 加载完整的分析数据
+complete_analysis_data = load_complete_analysis_data()
+
+if complete_analysis_data:
+    st.markdown("### ✏️ 片段编辑器")
+    st.markdown("在这里您可以调整视频片段的时间、语义类型等信息，您的修改将用于改进模型的分析准确性。")
+    
+    # 导入片段编辑器
+    try:
+        from streamlit_app.modules.analysis.segment_editor import SegmentEditor
+        
+        # 创建片段编辑器实例
+        segment_editor = SegmentEditor()
+        
+        # 为每个视频显示片段编辑器
+        for video_data in complete_analysis_data:
+            video_id = video_data.get("video_id", "unknown")
+            video_path = video_data.get("video_path", "")
+            semantic_segments = video_data.get("semantic_segments", {})
+            target_audiences = video_data.get("target_audiences", ["新手爸妈"])
+            
+            # 将语义片段转换为扁平列表
+            all_segments = []
+            
+            # 计算全局片段索引
+            global_segment_index = 0
+            
+            # 确保semantic_segments是字典格式
+            if isinstance(semantic_segments, dict):
+                # 首先收集所有片段以确定正确的索引
+                all_segments_with_types = []
+                for semantic_type, segments in semantic_segments.items():
+                    if isinstance(segments, list):
+                        for segment in segments:
+                            all_segments_with_types.append((semantic_type, segment))
+                
+                # 现在处理每个片段，使用正确的全局索引
+                for idx, (semantic_type, segment) in enumerate(all_segments_with_types):
+                    # 确保片段包含必要的信息
+                    segment_data = {
+                        'semantic_type': semantic_type,
+                        'start_time': segment.get('start_time', 0.0),
+                        'end_time': segment.get('end_time', 0.0),
+                        'time_period': segment.get('time_period', ''),
+                        'text': segment.get('text', ''),
+                        'confidence': segment.get('confidence', 0.0),
+                        'product_type': segment.get('analyzed_product_type', '未识别'),
+                        'target_audience': target_audiences[0] if target_audiences else '新手爸妈',
+                        'selling_points': segment.get('analyzed_selling_points', [])
+                    }
+                    
+                    # 构建文件路径，使用全局索引
+                    segment_filename = f"{video_id}_semantic_seg_{idx}_{semantic_type}.mp4"
+                    segment_data['file_path'] = os.path.join(ROOT_DIR, "data", "output", semantic_type, segment_filename)
+                    
+                    all_segments.append(segment_data)
+            elif isinstance(semantic_segments, list):
+                # 如果semantic_segments是列表，直接处理
+                for i, segment in enumerate(semantic_segments):
+                    segment_data = {
+                        'semantic_type': segment.get('semantic_type', '其他'),
+                        'start_time': segment.get('start_time', 0.0),
+                        'end_time': segment.get('end_time', 0.0),
+                        'time_period': segment.get('time_period', ''),
+                        'text': segment.get('text', ''),
+                        'confidence': segment.get('confidence', 0.0),
+                        'product_type': segment.get('analyzed_product_type', '未识别'),
+                        'target_audience': target_audiences[0] if target_audiences else '新手爸妈',
+                        'selling_points': segment.get('analyzed_selling_points', [])
+                    }
+                    
+                    # 构建文件路径
+                    semantic_type = segment.get('semantic_type', '其他')
+                    segment_filename = f"{video_id}_semantic_seg_{i}_{semantic_type}.mp4"
+                    segment_data['file_path'] = os.path.join(ROOT_DIR, "data", "output", semantic_type, segment_filename)
+                    
+                    all_segments.append(segment_data)
+            
+            if all_segments:
+                st.markdown(f"#### 🎬 视频: {video_id} ({len(all_segments)} 个片段)")
+                
+                # 渲染片段编辑器（表格形式）
+                updated_segments = segment_editor.render_segment_list(all_segments, video_id)
+                
+                # 如果有更新，保存反馈数据
+                if updated_segments:
+                    try:
+                        from streamlit_app.modules.analysis.feedback_manager import get_feedback_manager
+                        feedback_manager = get_feedback_manager()
+                        
+                        # 保存用户反馈
+                        feedback_data = {
+                            'video_id': video_id,
+                            'original_segments': all_segments,
+                            'updated_segments': updated_segments,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        
+                        feedback_manager.save_segment_correction(feedback_data)
+                        
+                    except Exception as e:
+                        st.warning(f"保存反馈数据失败: {e}")
+            else:
+                st.info(f"视频 {video_id} 暂无片段数据")
+    
+    except ImportError as e:
+        st.error(f"无法加载片段编辑器: {e}")
+    except Exception as e:
+        st.error(f"片段编辑器出错: {e}")
+        st.exception(e)  # 显示详细错误信息
+else:
+    st.info("暂无视频分析数据，请先上传视频并进行分析。")
 
 # 错误消息：仅当用户明确点击分析按钮但没有选择任何视频文件时显示。
 if analyze_button and not st.session_state.video_files:

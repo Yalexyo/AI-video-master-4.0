@@ -512,10 +512,11 @@ def display_results_interface(analysis_results=None):
         if analyzed_selling_points:
             selling_points_text = "、".join(analyzed_selling_points)
             data_row_cols[5].text_area(
-                label=f"selling_points_{index}_{row_data['filename']}",
+                label="核心卖点",
                 value=selling_points_text, 
                 height=80, 
-                label_visibility='collapsed'
+                label_visibility='collapsed',
+                key=f"selling_points_{index}_{row_data['filename']}"
             )
         else:
             data_row_cols[5].write("未识别")
