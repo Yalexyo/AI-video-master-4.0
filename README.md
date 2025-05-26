@@ -1,106 +1,259 @@
-# 视频分析大师 1.0
+# AI视频分析大师 3.0
 
-一个用于视频内容分析、意图匹配和片段筛选的AI应用。
+一个功能强大的AI视频内容分析、场景检测和语义分段系统，支持智能视频切分、内容匹配和片段筛选。
 
-## 主要功能
+## ✨ 主要功能
 
-- **视频分段与分析**：自动将视频分割成句子级别的片段，提取语音内容。
-- **意图匹配**：基于目标人群和产品卖点，匹配相关视频片段。
-- **内容筛选**：从大量视频中快速找到符合特定营销需求的内容片段。
-- **结果可视化**：展示匹配结果，并提供文本内容查看。
+### 🎬 视频场景分段
+- **智能场景检测**：支持FFmpeg专业检测、OpenCV内容分析、直方图分析三种检测方法
+- **多精度检测**：提供标准精度(0.2s)、高精度(0.1s)、超高精度(0.05s)三种检测精度
+- **手动语义标签**：支持10种语义类型标注（广告开场、问题陈述、产品介绍等）
+- **批量操作**：智能语义建议、批量标签设置、场景统计分析
+- **视频片段生成**：自动生成对应语义类型的视频片段文件
 
-## 使用方法
+### 📊 视频内容分析
+- **语音转录**：基于DashScope API的高精度语音识别
+- **语义分析**：使用Sentence Transformers进行内容语义理解
+- **意图匹配**：基于目标人群和产品卖点的智能内容匹配
+- **句子完整性修复**：智能边界调整，确保语句完整性
 
-### 安装依赖
+### 🔍 内容筛选与可视化
+- **多维度筛选**：按语义类型、时长、置信度等条件筛选
+- **结果可视化**：直观展示分析结果和匹配度
+- **数据导出**：支持CSV格式数据导出
+- **实时预览**：场景预览和视频片段查看
 
+## 🚀 快速开始
+
+### 环境要求
+- Python 3.10+
+- FFmpeg (用于视频处理)
+- 8GB+ RAM (推荐)
+
+### 安装步骤
+
+1. **克隆项目**
 ```bash
-# 创建虚拟环境
+git clone <repository-url>
+cd AI-Video-Master3.0
+```
+
+2. **创建虚拟环境**
+```bash
 python3.10 -m venv .venv
 source .venv/bin/activate  # Linux/macOS
 # 或者
 .venv\Scripts\activate     # Windows
+```
 
-# 安装依赖
+3. **安装依赖**
+```bash
 pip install -r requirements.txt
 ```
 
-### 设置API密钥
+4. **安装FFmpeg**
+```bash
+# macOS (使用Homebrew)
+brew install ffmpeg
 
-1. 复制示例环境文件：
+# Ubuntu/Debian
+sudo apt update && sudo apt install ffmpeg
+
+# Windows
+# 从 https://ffmpeg.org/download.html 下载并安装
+```
+
+5. **配置API密钥**
 ```bash
 cp .env.example .env
-```
-
-2. 编辑`.env`文件，添加您的DashScope API密钥：
-```
-DASHSCOPE_API_KEY=your_dashscope_api_key_here
+# 编辑 .env 文件，添加您的API密钥
 ```
 
 ### 运行应用
 
 ```bash
-# 方法1 (使用根目录的包装器脚本)
-python app.py
+# 启动Streamlit应用
+streamlit run app.py
+
+# 或指定端口
+streamlit run app.py --server.port 8501
 ```
 
-或者直接使用Streamlit运行：
+访问 `http://localhost:8501` 开始使用。
 
-```bash
-# 方法2 (直接运行Streamlit应用)
-streamlit run streamlit_app/app.py
-```
-
-## 目录结构
+## 📁 项目结构
 
 ```
 AI-Video-Master3.0/
-├── app.py                  # 启动应用的包装器脚本
-├── streamlit_app/          # Streamlit应用目录
-│   ├── app.py              # Streamlit应用主文件
-│   ├── config/             # 配置文件目录
-│   ├── modules/            # 功能模块目录
-│   │   ├── data_loader/    # 数据加载模块
-│   │   ├── data_process/   # 数据处理模块
-│   │   ├── analysis/       # 分析模块
-│   │   └── visualization/  # 数据可视化模块
-│   ├── tests/              # 测试目录
-│   ├── pages/              # 多页面应用的页面
-│   ├── utils/              # 工具函数
-│   └── assets/             # 静态资源
-├── scripts/                # 实用脚本目录
-├── data/                   # 数据目录
-│   ├── input/              # 输入数据
-│   ├── output/             # 输出结果
-│   ├── processed/          # 处理后的数据
-│   └── temp/               # 临时文件
-├── src/                    # 项目核心Python代码
-│   └── core/               # 核心功能模块
-├── models/                 # AI模型存放目录
-├── logs/                   # 日志文件目录
-├── requirements.txt        # 依赖包列表
-├── Makefile                # 项目管理命令
-└── README.md               # 项目说明
+├── app.py                          # 应用启动入口
+├── streamlit_app/                  # Streamlit应用
+│   ├── pages/                      # 多页面应用
+│   │   ├── 🎬_场景分段.py          # 场景分段页面 (新增)
+│   │   ├── 📊_视频分析.py          # 视频分析页面
+│   │   └── 🔍_内容筛选.py          # 内容筛选页面
+│   ├── modules/                    # 功能模块
+│   │   ├── analysis/               # 分析模块
+│   │   ├── data_loader/            # 数据加载
+│   │   ├── data_process/           # 数据处理
+│   │   └── visualization/          # 可视化
+│   └── utils/                      # 工具函数
+├── src/core/                       # 核心功能
+│   ├── models/                     # AI模型
+│   └── utils/                      # 核心工具
+│       ├── scene_detector.py       # 场景检测器 (核心)
+│       ├── video_processor.py      # 视频处理器
+│       └── intent_analyzer.py      # 意图分析器
+├── data/                           # 数据目录
+│   ├── input/test_videos/          # 测试视频
+│   ├── output/scene_segments/      # 场景片段输出
+│   ├── processed/segments/         # 处理后的片段
+│   └── temp/uploads/               # 临时上传文件
+├── models/sentence-transformers/   # 本地模型
+└── logs/                          # 日志文件
 ```
 
-## 技术栈
+## 🛠️ 核心技术
 
-- Python 3.10+
-- Streamlit
-- FFmpeg (用于视频处理)
-- DashScope API (用于语音识别和AI模型)
-- Sentence Transformers (用于语义分析)
+### 场景检测算法
+- **FFmpeg Scene Detection**: 专业级场景变化检测，支持自适应阈值
+- **OpenCV Content Analysis**: 基于帧间差异的内容变化检测
+- **Histogram Analysis**: 基于颜色直方图的场景变化检测
 
-## 配置
+### AI模型集成
+- **DashScope API**: 阿里云语音识别和大语言模型
+- **Sentence Transformers**: 多语言语义相似度计算
+- **DeepSeek API**: 备选大语言模型支持
 
-核心配置通过环境变量或 `.env` 文件提供，主要包括：
+### 视频处理
+- **FFmpeg**: 高精度视频切分和格式转换
+- **OpenCV**: 视频帧分析和特征提取
+- **多格式支持**: MP4, AVI, MOV, MKV, WMV
 
-- API密钥 (DASHSCOPE_API_KEY)
-- 默认数据目录
-- 模型参数
+## ⚙️ 配置说明
 
-## 注意事项
+### 环境变量配置 (.env)
+```bash
+# API配置
+DASHSCOPE_API_KEY=your_dashscope_api_key
+DEEPSEEK_API_KEY=your_deepseek_api_key
 
-- 确保安装了FFmpeg，它用于视频处理和分段。你可以从[FFmpeg官网](https://ffmpeg.org/download.html)下载并安装。
-- 处理大型视频文件可能需要较长时间。
-- 分析结果的准确性取决于输入视频的质量和语音清晰度。
-- 首次运行时，如果未设置API密钥，应用将无法进行语音识别和视频分析。 
+# 模型配置
+DEFAULT_MODEL=deepseek-chat
+SENTENCE_TRANSFORMER_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+
+# 路径配置
+DATA_DIR=./data
+MODELS_DIR=./models
+LOGS_DIR=./logs
+```
+
+### 场景检测参数
+- **检测阈值**: 0.1-0.8 (数值越低越敏感)
+- **最小场景长度**: 0.5-5.0秒
+- **检测精度**: 0.05-0.2秒间隔
+- **检测方法**: FFmpeg/Content/Histogram
+
+## 📖 使用指南
+
+### 1. 视频场景分段
+1. 访问"🎬 场景分段"页面
+2. 选择视频文件（支持多种格式）
+3. 调整检测参数（阈值、精度、方法）
+4. 点击"开始场景检测"
+5. 手动调整语义标签
+6. 生成视频片段或导出数据
+
+### 2. 视频内容分析
+1. 访问"📊 视频分析"页面
+2. 上传视频文件
+3. 等待语音转录完成
+4. 查看分析结果和语义分段
+5. 应用句子完整性修复
+
+### 3. 内容筛选匹配
+1. 访问"🔍 内容筛选"页面
+2. 设置目标人群和产品卖点
+3. 选择匹配算法和参数
+4. 查看匹配结果和相似度评分
+5. 导出符合条件的片段
+
+## 🔧 高级功能
+
+### 批量处理
+- 支持多视频文件批量处理
+- 自动化场景检测和语义标注
+- 批量导出和数据整理
+
+### 性能优化
+- 多线程视频处理
+- 智能缓存机制
+- 内存使用优化
+
+### 扩展性
+- 插件式检测算法
+- 自定义语义类型
+- API接口支持
+
+## 🐛 故障排除
+
+### 常见问题
+
+1. **FFmpeg未安装**
+   ```bash
+   # 检查FFmpeg安装
+   ffmpeg -version
+   ```
+
+2. **API密钥错误**
+   - 检查.env文件配置
+   - 验证API密钥有效性
+
+3. **内存不足**
+   - 降低检测精度
+   - 处理较短的视频片段
+
+4. **视频格式不支持**
+   - 使用FFmpeg转换格式
+   - 检查编码格式兼容性
+
+### 性能调优
+
+- **高精度模式**: 适合短视频，精确度高但处理慢
+- **标准模式**: 平衡精度和速度，推荐日常使用
+- **快速模式**: 适合长视频预览，速度快但精度较低
+
+## 📝 更新日志
+
+### v3.0 (当前版本)
+- ✅ 新增视频场景分段功能
+- ✅ 支持多精度检测设置
+- ✅ 集成FFmpeg专业检测
+- ✅ 优化用户界面和体验
+- ✅ 增强错误处理和日志记录
+
+### v2.0
+- ✅ 语音转录和语义分析
+- ✅ 意图匹配算法
+- ✅ 句子完整性修复
+
+### v1.0
+- ✅ 基础视频分析功能
+- ✅ Streamlit界面框架
+
+## 📄 许可证
+
+本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
+
+## 🤝 贡献
+
+欢迎提交Issue和Pull Request来改进项目！
+
+## 📞 支持
+
+如有问题或建议，请通过以下方式联系：
+- 提交GitHub Issue
+- 发送邮件至项目维护者
+
+---
+
+**AI视频分析大师 3.0** - 让视频内容分析更智能、更高效！ 
