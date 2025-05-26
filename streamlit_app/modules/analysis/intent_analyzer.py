@@ -483,7 +483,7 @@ class SemanticAnalyzer:
                     }
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON解析失败: {e}, 原始文本: {json_str[:500]}...")
-                    
+            
                     # 尝试修复双花括号问题
                     try:
                         # 移除开头和结尾的多余花括号
@@ -497,7 +497,7 @@ class SemanticAnalyzer:
                             }
                     except json.JSONDecodeError as e2:
                         logger.error(f"修复双花括号后仍然JSON解析失败: {e2}")
-                    
+                
                     # 如果JSON解析完全失败，尝试正则表达式提取目标人群
                     try:
                         import re
@@ -515,7 +515,7 @@ class SemanticAnalyzer:
                             }
                     except Exception as e3:
                         logger.error(f"正则表达式提取目标人群失败: {e3}")
-                    
+                
                     return {}
             
             # 如果解析失败，返回空结果
@@ -559,8 +559,8 @@ class SemanticAnalyzer:
                 if len(lines) >= 2:
                     try:
                         time_line_index = 0
-                        if lines[0].isdigit() and len(lines) >=3:
-                             time_line_index = 1
+                        if lines[0].isdigit() and len(lines) >= 3:
+                            time_line_index = 1
                         
                         if '-->' not in lines[time_line_index]:
                             if len(lines) > time_line_index + 1 and '-->' in lines[time_line_index+1]:
@@ -581,7 +581,7 @@ class SemanticAnalyzer:
                         start_time_sec = srt_time_to_seconds(start_time_str)
                         end_time_sec = srt_time_to_seconds(end_time_str)
                         text_content = " ".join(text_lines).strip()
-                        
+
                         if text_content:
                             srt_entries.append({
                                 "id": entry_id_counter,
@@ -600,7 +600,7 @@ class SemanticAnalyzer:
         if not srt_entries:
             logger.warning(f"SRT文件 {srt_file_path} 中没有有效的字幕条目。")
             return []
-
+            
         logger.info(f"成功解析SRT文件，共 {len(srt_entries)} 个字幕条目。")
 
         # 2. 构建用于LLM分析的文本
@@ -959,11 +959,11 @@ class SemanticAnalyzer:
         return end_line_id
 
     def _format_seconds_to_time(self, seconds: float) -> str:
-        """将秒转换为时间字符串格式 (HH:MM:SS)"""
+        """将秒转换为高精度时间字符串格式 (HH:MM:SS.mmm)"""
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        secs = seconds % 60  # 保持小数部分
+        return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
 
     def _call_deepseek_for_srt_segmentation(self, srt_text_for_llm, type_descriptions_formatted_str):
         """

@@ -298,7 +298,7 @@ class VideoProcessor:
     def extract_segment(self, video_path: str, start_time: float, end_time: float, \
                         segment_index: int, semantic_type: str, video_id: str, output_dir: str = None) -> Optional[str]:
         """
-        从视频中提取一个片段。
+        从视频中提取一个片段，使用高精度FFmpeg切分。
 
         Args:
             video_path: 原始视频文件路径。
@@ -327,59 +327,84 @@ class VideoProcessor:
             # 否则使用默认的 @segments 目录
             output_path = self.segments_output_dir / segment_filename
         
-        logger.info(f"准备提取片段: {output_path} 从 {video_path} [{start_time}s - {end_time}s]")
+        logger.info(f"准备提取片段: {output_path} 从 {video_path} [{start_time:.3f}s - {end_time:.3f}s]")
 
         try:
-            with VideoFileClip(video_path) as video_clip:
-                # 确保结束时间不超过视频总时长
-                if end_time > video_clip.duration:
-                    logger.warning(f"片段结束时间 ({end_time}s) 超出视频总时长 ({video_clip.duration}s). 将使用视频总时长作为结束时间。")
-                    end_time = video_clip.duration
-                
-                # 确保开始时间小于结束时间
-                if start_time >= end_time:
-                    logger.error(f"片段开始时间 ({start_time}s) 大于或等于结束时间 ({end_time}s). 无法提取片段。")
-                    return None
-
-                segment = video_clip.subclip(start_time, end_time)
-                
-                # 尝试写入文件，并记录详细日志
-                logger.info(f"开始写入视频片段: {output_path}")
-                
-                # 使用 MoviePy 的 logger 来捕获 FFmpeg 命令和输出
-                # 创建一个自定义的 MoviePy logger
-                moviepy_logger = logging.getLogger("moviepy")
-                # 可以设置 moviepy_logger 的级别和处理器，以便将日志输出到文件或控制台
-                # 例如: moviepy_logger.setLevel(logging.DEBUG)
-                # moviepy_logger.addHandler(logging.StreamHandler()) # 输出到控制台
-
-                segment.write_videofile(
-                    str(output_path), 
-                    codec="libx264", 
-                    audio_codec="aac",
-                    temp_audiofile=f"{self.temp_dir}/temp_audio_{segment_index}.m4a", # 确保临时音频文件路径有效
-                    remove_temp=True,
-                    # logger='bar' # 使用进度条，也可以传入自定义 logger
-                    # ffmpeg_params=["-loglevel", "debug"] # 尝试获取ffmpeg的debug日志，但可能干扰MoviePy的stdout/stderr捕获
-                )
+            # 使用FFmpeg直接切分，获得更高的时间精度
+            # 格式化时间为高精度格式 (HH:MM:SS.mmm)
+            start_time_str = self._format_time_for_ffmpeg(start_time)
+            end_time_str = self._format_time_for_ffmpeg(end_time)
+            duration = end_time - start_time
+            duration_str = self._format_time_for_ffmpeg(duration)
+            
+            logger.info(f"FFmpeg时间参数: start={start_time_str}, duration={duration_str}")
+            
+            # 构建FFmpeg命令，使用高精度切分
+            cmd = [
+                "ffmpeg", "-y",  # 覆盖输出文件
+                "-i", str(video_path),  # 输入文件
+                "-ss", start_time_str,  # 精确的开始时间
+                "-t", duration_str,     # 精确的持续时间（而不是结束时间）
+                "-c:v", "libx264",      # 视频编码器
+                "-c:a", "aac",          # 音频编码器
+                "-preset", "fast",      # 编码速度
+                "-crf", "23",           # 质量控制
+                "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                "-fflags", "+genpts",   # 生成PTS
+                "-copyts",              # 复制时间戳
+                "-start_at_zero",       # 从零开始
+                str(output_path)
+            ]
+            
+            logger.debug(f"执行FFmpeg命令: {' '.join(cmd)}")
+            
+            # 执行FFmpeg命令
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                check=False
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"FFmpeg切分失败，返回码: {result.returncode}")
+                logger.error(f"FFmpeg stderr: {result.stderr}")
+                return None
+            
+            # 验证输出文件
+            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                logger.error(f"切分后的文件不存在或为空: {output_path}")
+                return None
+            
             logger.info(f"成功提取视频片段: {output_path}")
             return str(output_path)
-        except subprocess.CalledProcessError as e: # 更具体的ffmpeg错误
-            logger.error(f"MoviePy/FFmpeg 在提取片段 {output_path} 时发生 CalledProcessError:")
-            logger.error(f"  Command: {e.cmd}")
-            logger.error(f"  Return code: {e.returncode}")
-            logger.error(f"  Stdout: {e.stdout.decode(errors='ignore') if e.stdout else 'N/A'}")
-            logger.error(f"  Stderr: {e.stderr.decode(errors='ignore') if e.stderr else 'N/A'}")
-            return None
+            
         except Exception as e:
-            # 捕获 'NoneType' object has no attribute 'stdout' 这类错误
-            logger.error(f"提取视频片段 {output_path} 时发生未知错误: {type(e).__name__} - {str(e)}")
+            logger.error(f"提取视频片段 {output_path} 时发生错误: {type(e).__name__} - {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            # 尝试清理可能的临时文件
+            
+            # 清理可能的失败文件
             if os.path.exists(output_path):
                 try:
                     os.remove(output_path)
                 except Exception as e_remove:
                     logger.warning(f"清理失败的片段文件 {output_path} 时出错: {e_remove}")
-            return None 
+            return None
+    
+    def _format_time_for_ffmpeg(self, seconds: float) -> str:
+        """
+        将秒数格式化为FFmpeg可识别的高精度时间格式
+        
+        Args:
+            seconds: 秒数（可以包含小数）
+            
+        Returns:
+            格式化的时间字符串 (HH:MM:SS.mmm)
+        """
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = seconds % 60
+        
+        # 格式化为 HH:MM:SS.mmm 格式，保留3位小数
+        return f"{hours:02d}:{minutes:02d}:{secs:06.3f}" 
