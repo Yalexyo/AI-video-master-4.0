@@ -1,5 +1,5 @@
 """
-视频分析大师 1.0 - 主入口
+视频分析大师 3.0 - 主入口
 
 启动方式: streamlit run app.py
 """
@@ -13,8 +13,8 @@ if __name__ == "__main__":
     # 设置环境变量
     os.environ["PYTHONPATH"] = os.getcwd()
     
-    # 使用subprocess启动Streamlit应用
-    streamlit_app_path = os.path.join(os.path.dirname(__file__), "streamlit_app", "🔍_分析.py")
+    # 使用subprocess启动Streamlit应用 - 更新为新的主页面
+    streamlit_app_path = os.path.join(os.path.dirname(__file__), "streamlit_app", "主页.py")
     
     try:
         subprocess.run(["streamlit", "run", streamlit_app_path], check=True)
