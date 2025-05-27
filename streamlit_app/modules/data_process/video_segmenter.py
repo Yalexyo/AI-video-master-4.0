@@ -93,18 +93,17 @@ class VideoSegmenter:
             logger.error(f"音频提取失败: {e}")
             raise
     
-    def analyze_audio(self, audio_path=None):
+    def analyze_audio(self, audio_path=None, use_new_analyzer=True):
         """
         分析音频，获取语音时间戳
         
         Args:
             audio_path: 音频文件路径，如果为None则使用提取的音频
+            use_new_analyzer: 是否使用新的DashScope分析器
             
         Returns:
             语音时间戳列表
         """
-        from src.core.transcribe_core import transcribe_audio_with_timestamp
-        
         audio_path = audio_path or self.audio_path
         if not os.path.exists(audio_path):
             logger.error(f"音频文件不存在: {audio_path}")
@@ -117,13 +116,61 @@ class VideoSegmenter:
         )
         
         try:
-            transcript_data = transcribe_audio_with_timestamp(
-                audio_path, 
-                output_json=output_json
-            )
+            if use_new_analyzer:
+                # 使用新的DashScope语音分析器
+                from streamlit_app.modules.ai_analyzers import DashScopeAudioAnalyzer
+                
+                analyzer = DashScopeAudioAnalyzer()
+                if not analyzer.is_available():
+                    logger.warning("DashScope分析器不可用，回退到原有方法")
+                    use_new_analyzer = False
+                else:
+                    # 使用正则表达式规则进行专业词汇矫正
+                    result = analyzer.transcribe_audio(
+                        audio_path, 
+                        format_result=True,
+                        professional_terms=None  # 使用内置的正则规则
+                    )
+                    
+                    if result["success"]:
+                        # 转换格式以兼容现有代码
+                        transcript_data = {
+                            "transcripts": [{
+                                "text": result["transcript"],
+                                "sentences": result["segments"]
+                            }]
+                        }
+                        
+                        # 应用JSON校正 (使用正则表达式规则)
+                        corrected_data, was_corrected = analyzer.apply_corrections_to_json(
+                            transcript_data, use_regex_rules=True
+                        )
+                        
+                        # 保存结果
+                        with open(output_json, 'w', encoding='utf-8') as f:
+                            json.dump(corrected_data, f, ensure_ascii=False, indent=2)
+                        
+                        if was_corrected:
+                            logger.info(f"已应用专业词汇矫正到转录结果")
+                        
+                        logger.info(f"语音时间戳分析成功，结果保存至: {output_json}")
+                        return corrected_data
+                    else:
+                        logger.error(f"DashScope转录失败: {result['error']}")
+                        use_new_analyzer = False
             
-            logger.info(f"语音时间戳分析成功，结果保存至: {output_json}")
-            return transcript_data
+            if not use_new_analyzer:
+                # 回退到原有的转录方法
+                from src.core.transcribe_core import transcribe_audio_with_timestamp
+                
+                transcript_data = transcribe_audio_with_timestamp(
+                    audio_path, 
+                    output_json=output_json
+                )
+                
+                logger.info(f"语音时间戳分析成功，结果保存至: {output_json}")
+                return transcript_data
+                
         except Exception as e:
             logger.error(f"语音时间戳分析失败: {str(e)}")
             raise
@@ -284,17 +331,57 @@ def _cached_video_processing_and_segmentation(video_path, file_mtime, file_size,
     # 1. 使用VideoProcessor获取转录数据（包括原始ASR句子和校正后文本）
     processor = VideoProcessor(temp_dir=config.get("temp_dir"))
     
-    # 不直接使用VideoProcessor.process_video方法，因为它不包含转录功能
-    # 改用 src/core/transcribe_core.py 中的 process_video 方法
-    from src.core.transcribe_core import process_video as transcribe_process_video
-    
     # 先让VideoProcessor优化视频（如果需要）
-    video_info = processor.process_video(video_path, output_dir=config.get("processed_dir")) # 优化后的视频可以保留在processed
+    video_info = processor.process_video(video_path, output_dir=config.get("processed_dir"))
     
-    # 然后使用transcribe_core进行转录，中间文件放入temp目录
+    # 准备转录
     asr_temp_dir = os.path.join(config.get("temp_dir"), "asr_intermediate_files", f"{video_id}_{timestamp_str}")
     os.makedirs(asr_temp_dir, exist_ok=True)
-    transcript_json_path = transcribe_process_video(video_path, output_dir=asr_temp_dir)
+    
+    # 尝试使用新的DashScope分析器
+    transcript_json_path = None
+    try:
+        from streamlit_app.modules.ai_analyzers import DashScopeAudioAnalyzer
+        
+        analyzer = DashScopeAudioAnalyzer()
+        if analyzer.is_available():
+            logger.info("使用DashScope语音分析器进行转录")
+            result = analyzer.transcribe_video(video_path, extract_audio_first=True)
+            
+            if result["success"]:
+                # 转换格式以兼容现有代码
+                transcript_data_new = {
+                    "text": result["transcript"],
+                    "transcripts": [{
+                        "text": result["transcript"],
+                        "sentences": result["segments"]
+                    }],
+                    "result": {
+                        "Sentences": result["segments"]
+                    }
+                }
+                
+                # 保存到临时目录
+                transcript_json_path = os.path.join(asr_temp_dir, f"{video_id}_transcript.json")
+                with open(transcript_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(transcript_data_new, f, ensure_ascii=False, indent=2)
+                
+                logger.info(f"DashScope转录完成，结果保存至: {transcript_json_path}")
+            else:
+                logger.warning(f"DashScope转录失败: {result['error']}，回退到原有方法")
+                analyzer = None
+        else:
+            logger.warning("DashScope分析器不可用，回退到原有方法")
+            analyzer = None
+            
+    except Exception as e:
+        logger.warning(f"DashScope分析器初始化失败: {str(e)}，回退到原有方法")
+        analyzer = None
+    
+    # 如果DashScope失败，使用原有的转录方法
+    if not transcript_json_path:
+        from src.core.transcribe_core import process_video as transcribe_process_video
+        transcript_json_path = transcribe_process_video(video_path, output_dir=asr_temp_dir)
     
     # 加载转录结果
     transcript_data_corrected = None

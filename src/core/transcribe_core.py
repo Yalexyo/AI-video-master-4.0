@@ -4,6 +4,11 @@
 """
 转录核心模块 - 提供统一的转录和校正功能
 
+⚠️ 注意：本模块正在逐步迁移到 streamlit_app/modules/ai_analyzers/dashscope_audio_analyzer.py
+- 专业词汇校正功能已迁移到新模块
+- 本模块仅保留必要的转录功能作为回退方案
+- 建议新代码使用 DashScopeAudioAnalyzer
+
 该模块封装了从视频/音频文件中提取、转录并校正文本的全流程功能，
 包括专业词汇校正、热词表支持等，作为项目中转录功能的统一入口。
 """
@@ -26,56 +31,140 @@ logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# ==================== 已弃用函数 ====================
+# 以下函数已迁移到 DashScopeAudioAnalyzer，此处保留仅为向后兼容
+
 def correct_professional_terms(text):
-    """校正文本中的专业术语，使用正则表达式替换"""
-    corrections = [
-        # 启赋蕴淳A2专用规则
-        (r"启赋蕴淳\s*[Aa]2", "启赋蕴淳A2"),
-        (r"(起肤|启赋|其赋|启步|寄附|企付|气付)蕴(醇|春|淳|纯|存|纯新)\s*[Aa]2", "启赋蕴淳A2"),
-        (r"启赋\s+蕴(醇|春|淳|纯|存)\s*[Aa]2", "启赋蕴淳A2"),
-        
-        # 启赋蕴淳系列纠正
-        (r"(其|起|启|寄|企|气|七)(妇|赋|肤|步|腹|肚|服|赴|附|父|复|伏|夫|扶)(孕|蕴|运|韵|氲|芸|允|孕)(唇|春|淳|纯|醇|淙|椿|纯)(准|尊|遵)?", "启赋蕴淳"),
-        (r"(盲选)?(起|启|其|寄|企|气|七)?(腹|肚|服|赴|附|父|复|伏|夫|扶|妇|赋|肤|步)(孕|运|韵|氲|芸|允|孕|蕴)(唇|春|淳|纯|醇|淙|椿|纯)(准|尊|遵)?", "启赋蕴淳"),
-        (r"(起肤|启赋|其赋|启步|寄附|企付|气付)蕴(醇|春|淳|纯|存|纯新)", "启赋蕴淳"),
-        (r"启赋\s+蕴(醇|春|淳|纯|存)", "启赋蕴淳"),
-        (r"(起肤|启赋|其赋|启步|寄附|企付|气付)\s+蕴(醇|春|淳|纯|存)", "启赋蕴淳"),
-        (r"(起肤|启赋|其赋|启步|寄附|企付|气付)(韵|运|孕)(醇|春|淳|纯|存)", "启赋蕴淳"),
-        (r"(起|启|其).*(孕|蕴).*(准|淳|唇)", "启赋蕴淳"),
-        
-        # 低聚糖HMO系列纠正
-        (r"低聚糖\s*[Hh][Mm]?[Oo]?", "低聚糖HMO"),
-        (r"低聚糖\s*[Hh](\s|是|，|,|。|\.)", "低聚糖HMO$1"),
-        (r"低聚(塘|唐|煻)\s*[Hh][Mm]?[Oo]?", "低聚糖HMO"),
-        (r"低(祖|组|族)糖\s*[Hh][Mm]?[Oo]?", "低聚糖HMO"),
-        
-        # A2奶源系列纠正
-        (r"([Aa]|二|黑二|埃|爱|挨)奶源", "A2奶源"),
-        (r"[Aa]\s*2奶源", "A2奶源"),
-        (r"[Aa]二奶源", "A2奶源"),
-        (r"([Aa]|二|黑二|埃|爱|挨)(\s+)奶源", "A2奶源"),
-        
-        # OPN/OPG系列纠正
-        (r"欧盾", "OPN"),
-        (r"O-P-N", "OPN"),
-        (r"O\.P\.N", "OPN"),
-        (r"(欧|偶|鸥)(\s+)?(盾|顿|敦)", "OPN"),
-        (r"蛋白\s*[Oo]\s*[Pp]\s*[Nn]", "蛋白OPN"),
-        (r"蛋白\s*([Oo]|欧|偶)\s*([Pp]|盾|顿)\s*([Nn]|恩)", "蛋白OPN"),
-        (r"op[n]?王", "OPN"),
-        (r"op[g]?王", "OPN"),
-        
-        # 自御力/自愈力系列
-        (r"自(御|愈|育|渔|余|予|玉|预)力", "自愈力"),
-        (r"自(御|愈|育|渔|余|予|玉|预)(\s+)力", "自愈力"),
-    ]
+    """
+    ⚠️ 已弃用：此函数已迁移到 DashScopeAudioAnalyzer._apply_regex_corrections()
+    建议使用：DashScopeAudioAnalyzer.correct_professional_terms(text, use_regex_rules=True)
     
-    # 应用所有校正规则
-    corrected_text = text
-    for pattern, replacement in corrections:
-        corrected_text = re.sub(pattern, replacement, corrected_text)
+    校正文本中的专业术语，使用正则表达式替换
+    """
+    logger.warning("correct_professional_terms() 已弃用，建议使用 DashScopeAudioAnalyzer.correct_professional_terms()")
     
-    return corrected_text
+    # 为了向后兼容，尝试使用新分析器
+    try:
+        from streamlit_app.modules.ai_analyzers import DashScopeAudioAnalyzer
+        analyzer = DashScopeAudioAnalyzer()
+        return analyzer.correct_professional_terms(text, use_regex_rules=True)
+    except Exception as e:
+        logger.warning(f"无法使用新分析器，回退到原有实现: {str(e)}")
+        # 回退到原有实现...
+        corrections = [
+            # 启赋蕴淳A2专用规则
+            (r"启赋蕴淳\s*[Aa]2", "启赋蕴淳A2"),
+            (r"(起肤|启赋|其赋|启步|寄附|企付|气付)蕴(醇|春|淳|纯|存|纯新)\s*[Aa]2", "启赋蕴淳A2"),
+            (r"启赋\s+蕴(醇|春|淳|纯|存)\s*[Aa]2", "启赋蕴淳A2"),
+            
+            # 启赋蕴淳系列纠正
+            (r"(其|起|启|寄|企|气|七)(妇|赋|肤|步|腹|肚|服|赴|附|父|复|伏|夫|扶)(孕|蕴|运|韵|氲|芸|允|孕)(唇|春|淳|纯|醇|淙|椿|纯)(准|尊|遵)?", "启赋蕴淳"),
+            (r"(盲选)?(起|启|其|寄|企|气|七)?(腹|肚|服|赴|附|父|复|伏|夫|扶|妇|赋|肤|步)(孕|运|韵|氲|芸|允|孕|蕴)(唇|春|淳|纯|醇|淙|椿|纯)(准|尊|遵)?", "启赋蕴淳"),
+            (r"(起肤|启赋|其赋|启步|寄附|企付|气付)蕴(醇|春|淳|纯|存|纯新)", "启赋蕴淳"),
+            (r"启赋\s+蕴(醇|春|淳|纯|存)", "启赋蕴淳"),
+            (r"(起肤|启赋|其赋|启步|寄附|企付|气付)\s+蕴(醇|春|淳|纯|存)", "启赋蕴淳"),
+            (r"(起肤|启赋|其赋|启步|寄附|企付|气付)(韵|运|孕)(醇|春|淳|纯|存)", "启赋蕴淳"),
+            (r"(起|启|其).*(孕|蕴).*(准|淳|唇)", "启赋蕴淳"),
+            
+            # 低聚糖HMO系列纠正
+            (r"低聚糖\s*[Hh][Mm]?[Oo]?", "低聚糖HMO"),
+            (r"低聚糖\s*[Hh](\s|是|，|,|。|\.)", "低聚糖HMO$1"),
+            (r"低聚(塘|唐|煻)\s*[Hh][Mm]?[Oo]?", "低聚糖HMO"),
+            (r"低(祖|组|族)糖\s*[Hh][Mm]?[Oo]?", "低聚糖HMO"),
+            
+            # A2奶源系列纠正
+            (r"([Aa]|二|黑二|埃|爱|挨)奶源", "A2奶源"),
+            (r"[Aa]\s*2奶源", "A2奶源"),
+            (r"[Aa]二奶源", "A2奶源"),
+            (r"([Aa]|二|黑二|埃|爱|挨)(\s+)奶源", "A2奶源"),
+            
+            # OPN/OPG系列纠正
+            (r"欧盾", "OPN"),
+            (r"O-P-N", "OPN"),
+            (r"O\.P\.N", "OPN"),
+            (r"(欧|偶|鸥)(\s+)?(盾|顿|敦)", "OPN"),
+            (r"蛋白\s*[Oo]\s*[Pp]\s*[Nn]", "蛋白OPN"),
+            (r"蛋白\s*([Oo]|欧|偶)\s*([Pp]|盾|顿)\s*([Nn]|恩)", "蛋白OPN"),
+            (r"op[n]?王", "OPN"),
+            (r"op[g]?王", "OPN"),
+            
+            # 自御力/自愈力系列
+            (r"自(御|愈|育|渔|余|予|玉|预)力", "自愈力"),
+            (r"自(御|愈|育|渔|余|予|玉|预)(\s+)力", "自愈力"),
+        ]
+        
+        # 应用所有校正规则
+        corrected_text = text
+        for pattern, replacement in corrections:
+            corrected_text = re.sub(pattern, replacement, corrected_text)
+        
+        return corrected_text
+
+def apply_corrections_to_json(json_data, output_file=None):
+    """
+    ⚠️ 已弃用：此函数已迁移到 DashScopeAudioAnalyzer.apply_corrections_to_json()
+    建议使用：DashScopeAudioAnalyzer.apply_corrections_to_json(json_data, use_regex_rules=True)
+    
+    应用专业词汇校正到JSON数据
+    """
+    logger.warning("apply_corrections_to_json() 已弃用，建议使用 DashScopeAudioAnalyzer.apply_corrections_to_json()")
+    
+    # 为了向后兼容，尝试使用新分析器
+    try:
+        from streamlit_app.modules.ai_analyzers import DashScopeAudioAnalyzer
+        analyzer = DashScopeAudioAnalyzer()
+        return analyzer.apply_corrections_to_json(json_data, output_file, use_regex_rules=True)
+    except Exception as e:
+        logger.warning(f"无法使用新分析器，回退到原有实现: {str(e)}")
+        
+        # 回退到原有实现
+        if isinstance(json_data, str):
+            try:
+                with open(json_data, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except:
+                logger.error(f"无法加载JSON文件: {json_data}")
+                return None, False
+        else:
+            data = json_data
+        
+        # 应用专业词汇校正
+        corrected = False
+        if "transcripts" in data:
+            for transcript in data["transcripts"]:
+                # 校正整体文本
+                if "text" in transcript:
+                    original_text = transcript["text"]
+                    transcript["text"] = correct_professional_terms(original_text)
+                    if original_text != transcript["text"]:
+                        corrected = True
+                
+                # 校正每个句子
+                if "sentences" in transcript:
+                    for sentence in transcript["sentences"]:
+                        if "text" in sentence:
+                            original_text = sentence["text"]
+                            sentence["text"] = correct_professional_terms(original_text)
+                            if original_text != sentence["text"]:
+                                corrected = True
+        
+        # 检查是否有单独的sentences字段
+        if "sentences" in data:
+            for sentence in data["sentences"]:
+                if "text" in sentence:
+                    original_text = sentence["text"]
+                    sentence["text"] = correct_professional_terms(original_text)
+                    if original_text != sentence["text"]:
+                        corrected = True
+        
+        # 如果需要输出到文件
+        if output_file:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        return data, corrected
+
+# ==================== 仍在使用的核心函数 ====================
 
 def millisec_to_srt_time(ms):
     """将毫秒转换为SRT格式的时间戳 (HH:MM:SS,mmm)"""
@@ -85,64 +174,6 @@ def millisec_to_srt_time(ms):
     minutes, seconds = divmod(remainder, 60)
     # 格式化为SRT时间格式
     return f"{hours:02}:{minutes:02}:{seconds:02},{ms % 1000:03}"
-
-def apply_corrections_to_json(json_data, output_file=None):
-    """
-    应用专业词汇校正到JSON数据
-    
-    Args:
-        json_data: JSON数据（可以是字典或文件路径）
-        output_file: 输出JSON文件路径，如果为None则只返回结果不写入文件
-        
-    Returns:
-        修正后的JSON数据，及是否有修改
-    """
-    # 如果json_data是字符串，则尝试将其解释为文件路径
-    if isinstance(json_data, str):
-        try:
-            with open(json_data, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except:
-            logger.error(f"无法加载JSON文件: {json_data}")
-            return None, False
-    else:
-        data = json_data
-    
-    # 应用专业词汇校正
-    corrected = False
-    if "transcripts" in data:
-        for transcript in data["transcripts"]:
-            # 校正整体文本
-            if "text" in transcript:
-                original_text = transcript["text"]
-                transcript["text"] = correct_professional_terms(original_text)
-                if original_text != transcript["text"]:
-                    corrected = True
-            
-            # 校正每个句子
-            if "sentences" in transcript:
-                for sentence in transcript["sentences"]:
-                    if "text" in sentence:
-                        original_text = sentence["text"]
-                        sentence["text"] = correct_professional_terms(original_text)
-                        if original_text != sentence["text"]:
-                            corrected = True
-    
-    # 检查是否有单独的sentences字段（适配不同API返回格式）
-    if "sentences" in data:
-        for sentence in data["sentences"]:
-            if "text" in sentence:
-                original_text = sentence["text"]
-                sentence["text"] = correct_professional_terms(original_text)
-                if original_text != sentence["text"]:
-                    corrected = True
-    
-    # 如果需要输出到文件
-    if output_file:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    
-    return data, corrected
 
 def extract_audio(video_path, output_path=None, temp_dir=None):
     """

@@ -29,3 +29,5 @@ ffmpeg-python>=0.2.0
 watchdog>=2.1.8
 # DeepSeek V3 支持
 openai>=1.0.0
+# Google Cloud Video Intelligence API
+google-cloud-videointelligence>=3.0.0

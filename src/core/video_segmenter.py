@@ -177,12 +177,13 @@ class VideoSegmenter:
             logger.error(f"执行音频提取命令失败: {str(e)}")
             raise
 
-    def _transcribe_audio(self, audio_path: str) -> Dict[str, Any]:
+    def _transcribe_audio(self, audio_path: str, use_new_analyzer: bool = True) -> Dict[str, Any]:
         """
         转录音频文件
 
         Args:
             audio_path: 音频文件路径
+            use_new_analyzer: 是否使用新的DashScope分析器
 
         Returns:
             转录结果字典
@@ -193,26 +194,92 @@ class VideoSegmenter:
         logger.info(f"开始转录音频: {audio_path}")
 
         try:
-            # 导入转录核心模块
-            from src.core.transcribe_core import transcribe_audio
+            if use_new_analyzer:
+                # 尝试使用新的DashScope分析器
+                try:
+                    from streamlit_app.modules.ai_analyzers import DashScopeAudioAnalyzer
+                    
+                    analyzer = DashScopeAudioAnalyzer()
+                    if analyzer.is_available():
+                        logger.info("使用DashScope语音分析器进行转录")
+                        # 使用正则表达式规则进行专业词汇矫正
+                        result = analyzer.transcribe_audio(
+                            audio_path, 
+                            format_result=True,
+                            professional_terms=None  # 使用内置的正则规则
+                        )
+                        
+                        if result["success"]:
+                            # 转换格式以兼容现有代码
+                            transcript_data = {
+                                "text": result["transcript"],
+                                "transcripts": [{
+                                    "text": result["transcript"],
+                                    "sentences": []
+                                }],
+                                "sentences": []
+                            }
+                            
+                            # 转换时间段格式
+                            for segment in result["segments"]:
+                                sentence_data = {
+                                    "text": segment["text"],
+                                    "begin_time": int(segment["start_time"] * 1000),  # 转换为毫秒
+                                    "end_time": int(segment["end_time"] * 1000),
+                                    "confidence": segment.get("confidence", 1.0)
+                                }
+                                transcript_data["sentences"].append(sentence_data)
+                                transcript_data["transcripts"][0]["sentences"].append(sentence_data)
+                            
+                            # 应用JSON校正 (使用正则表达式规则)
+                            corrected_data, was_corrected = analyzer.apply_corrections_to_json(
+                                transcript_data, use_regex_rules=True
+                            )
+                            
+                            if was_corrected:
+                                transcript_data = corrected_data
+                                logger.info(f"已应用专业词汇矫正到转录结果")
+                            
+                            logger.info(f"DashScope转录成功，识别到 {len(result['segments'])} 个语音段")
+                            
+                        else:
+                            logger.warning(f"DashScope转录失败: {result['error']}，回退到原有方法")
+                            analyzer = None
+                    else:
+                        logger.warning("DashScope分析器不可用，回退到原有方法")
+                        analyzer = None
+                        
+                except Exception as e:
+                    logger.warning(f"DashScope分析器使用失败: {str(e)}，回退到原有方法")
+                    analyzer = None
+                
+                # 如果DashScope成功，直接使用结果
+                if analyzer and 'transcript_data' in locals():
+                    pass  # 继续使用transcript_data
+                else:
+                    use_new_analyzer = False
+            
+            if not use_new_analyzer:
+                # 使用原有的转录方法
+                from src.core.transcribe_core import transcribe_audio
 
-            # 如果有热词ID，使用它
-            hotword_id = self.hotword_id if self.hotword_id else None
+                # 如果有热词ID，使用它
+                hotword_id = self.hotword_id if self.hotword_id else None
 
-            # 使用临时目录
-            output_dir = self.temp_dir
+                # 使用临时目录
+                output_dir = self.temp_dir
 
-            # 使用transcribe_core进行转录
-            transcript_json = transcribe_audio(
-    audio_path, hotword_id=hotword_id, output_dir=output_dir)
+                # 使用transcribe_core进行转录
+                transcript_json = transcribe_audio(
+                    audio_path, hotword_id=hotword_id, output_dir=output_dir)
 
-            if not transcript_json or not os.path.exists(transcript_json):
-                logger.error("音频转录失败，无法获取有效转录结果")
-                raise RuntimeError("音频转录失败，无法获取有效转录结果")
+                if not transcript_json or not os.path.exists(transcript_json):
+                    logger.error("音频转录失败，无法获取有效转录结果")
+                    raise RuntimeError("音频转录失败，无法获取有效转录结果")
 
-            # 读取转录结果
-            with open(transcript_json, 'r', encoding='utf-8') as f:
-                transcript_data = json.load(f)
+                # 读取转录结果
+                with open(transcript_json, 'r', encoding='utf-8') as f:
+                    transcript_data = json.load(f)
 
             logger.debug(f"转录结果格式: {json.dumps(list(transcript_data.keys()))}")
 
