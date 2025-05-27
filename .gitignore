@@ -128,3 +128,19 @@ models/**/*
 
 # 忽略测试视频输入
 data/input/test_videos/
+
+# Google Cloud credentials and temp files (STRICT)
+temp/
+temp/**/*
+google_credentials.json
+**/google_credentials.json
+**/*credentials*.json
+**/*service_account*.json
+
+# Environment variables and secrets
+.env*
+*.env
+secrets.toml
+**/*secret*
+**/*key*
+**/*token*
