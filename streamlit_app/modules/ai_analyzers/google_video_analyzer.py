@@ -97,6 +97,20 @@ class GoogleVideoAnalyzer:
         """
         if not self.client:
             raise Exception("Google Cloud客户端未初始化")
+        
+        # 检查网络连接
+        if progress_callback:
+            progress_callback(5, "检查网络连接和服务可用性...")
+        
+        try:
+            import requests
+            # 快速检查Google Cloud服务可用性
+            response = requests.get("https://videointelligence.googleapis.com", timeout=10)
+            logger.info("Google Cloud Video Intelligence服务连接正常")
+        except Exception as e:
+            error_msg = f"无法连接到Google Cloud服务，请检查网络连接: {str(e)}"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
             
         try:
             from google.cloud import videointelligence_v1 as vi
@@ -118,6 +132,25 @@ class GoogleVideoAnalyzer:
             
             # 构建请求
             if video_path and os.path.exists(video_path):
+                # 检查文件大小
+                file_size = os.path.getsize(video_path)
+                file_size_mb = file_size / (1024 * 1024)
+                
+                if progress_callback:
+                    progress_callback(15, f"准备上传视频文件 ({file_size_mb:.1f}MB)...")
+                
+                # 大文件警告
+                if file_size_mb > 200:
+                    logger.warning(f"视频文件较大 ({file_size_mb:.1f}MB)，分析可能需要较长时间")
+                    if progress_callback:
+                        progress_callback(20, f"视频文件较大 ({file_size_mb:.1f}MB)，预计需要5-15分钟...")
+                elif file_size_mb > 50:
+                    if progress_callback:
+                        progress_callback(20, f"视频文件大小适中 ({file_size_mb:.1f}MB)，预计需要2-5分钟...")
+                else:
+                    if progress_callback:
+                        progress_callback(20, f"视频文件较小 ({file_size_mb:.1f}MB)，预计1-2分钟完成...")
+                
                 # 本地文件
                 with open(video_path, "rb") as f:
                     input_content = f.read()
@@ -130,27 +163,40 @@ class GoogleVideoAnalyzer:
             
             # 执行分析
             if progress_callback:
-                progress_callback(10, "正在上传视频并开始分析...")
-                
-            operation = self.client.annotate_video(request=request)
-            
-            if progress_callback:
                 progress_callback(30, f"分析请求已提交，操作ID: {operation.operation.name}")
             
             # 等待完成
             start_time = time.time()
-            timeout = 600  # 10分钟超时
+            timeout = 1200  # 增加到20分钟超时
+            check_interval = 10  # 每10秒检查一次
+            
+            if progress_callback:
+                progress_callback(35, "分析任务已提交到Google Cloud，正在处理...")
             
             while not operation.done():
                 elapsed = time.time() - start_time
                 if elapsed > timeout:
-                    raise TimeoutError("分析超时")
+                    error_msg = f"分析超时（{timeout}秒），视频可能太大或网络较慢"
+                    logger.error(error_msg)
+                    raise TimeoutError(error_msg)
                 
                 if progress_callback:
-                    progress = min(30 + (elapsed / timeout) * 60, 90)
-                    progress_callback(int(progress), f"正在分析中... 已用时 {elapsed:.0f}秒")
+                    # 非线性进度计算，前期慢后期快
+                    progress_ratio = min(elapsed / timeout, 0.8)
+                    progress = 35 + int(progress_ratio * 55)  # 35-90%
+                    
+                    # 估算剩余时间
+                    if elapsed > 30:  # 30秒后开始估算
+                        estimated_total = elapsed / progress_ratio if progress_ratio > 0 else timeout
+                        remaining = max(0, estimated_total - elapsed)
+                        progress_callback(
+                            progress, 
+                            f"分析进行中... 已用时 {elapsed:.0f}秒，预计还需 {remaining:.0f}秒"
+                        )
+                    else:
+                        progress_callback(progress, f"分析进行中... 已用时 {elapsed:.0f}秒")
                 
-                time.sleep(5)
+                time.sleep(check_interval)
             
             result = operation.result()
             
