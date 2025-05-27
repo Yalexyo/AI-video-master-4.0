@@ -711,290 +711,11 @@ def get_time_seconds(time_offset):
 
 
 
-def analyze_video_segment_with_ai(segment_path, tag_language="中文"):
-    """
-    使用千问2.5视觉AI对单个视频片段进行分析并生成标签
-    
-    Args:
-        segment_path: 视频片段文件路径
-        tag_language: 标签语言 ("中文" 或 "英文")
-    
-    Returns:
-        分析结果字典，包含物体、场景、人物、情绪等标签
-    """
-    try:
-        from streamlit_app.modules.ai_analyzers import QwenVideoAnalyzer
-        
-        # 使用千问视频分析器
-        analyzer = QwenVideoAnalyzer()
-        
-        if not analyzer.is_available():
-            st.error("❌ 千问2.5分析器不可用，请检查DASHSCOPE_API_KEY环境变量")
-            return {
-                'objects': [],
-                'scenes': [],
-                'people': [],
-                'emotions': [],
-                'all_tags': []
-            }
-        
-        # 分析视频片段
-        result = analyzer.analyze_video_segment(
-            segment_path, 
-            tag_language=tag_language,
-            frame_rate=2.0
-        )
-        
-        if result.get("success"):
-            return result
-        else:
-            st.error(f"❌ 视频分析失败: {result.get('error', '未知错误')}")
-            return {
-                'objects': [],
-                'scenes': [],
-                'people': [],
-                'emotions': [],
-                'all_tags': []
-            }
-        
-    except ImportError:
-        st.error("❌ 千问视觉分析器模块未找到，请确保模块结构正确")
-        return {
-            'objects': [],
-            'scenes': [],
-            'people': [],
-            'emotions': [],
-            'all_tags': []
-        }
-    except Exception as e:
-        st.error(f"❌ 视频分析失败: {str(e)}")
-        return {
-            'objects': [],
-            'scenes': [],
-            'people': [],
-            'emotions': [],
-            'all_tags': []
-        }
 
-def create_video_segments_with_tags(video_path, segments_data, video_id, annotation, auto_tag=True, tag_language="中文"):
-    """
-    根据分析结果创建视频片段并生成智能标签
-    优化策略：先一次性切出所有片段，然后批量进行视觉分析
-    
-    Args:
-        video_path: 原始视频路径
-        segments_data: 片段数据列表
-        video_id: 视频ID
-        annotation: Google Cloud分析结果
-        auto_tag: 是否启用自动标签
-        tag_language: 标签语言
-    
-    Returns:
-        成功创建的片段列表（包含标签信息）
-    """
-    try:
-        # 调试信息
-        st.info(f"🔍 调试信息:")
-        st.write(f"- 视频路径: {video_path}")
-        st.write(f"- 视频ID: {video_id}")
-        st.write(f"- 片段数量: {len(segments_data)}")
-        st.write(f"- 视频文件存在: {os.path.exists(video_path) if video_path else 'N/A'}")
-        st.write(f"- 自动标签: {auto_tag}")
-        
-        if not video_path:
-            st.error("❌ 视频路径为空，无法进行切分")
-            return []
-        
-        if not os.path.exists(video_path):
-            st.error(f"❌ 视频文件不存在: {video_path}")
-            return []
-            
-        # 创建输出目录
-        from pathlib import Path
-        root_dir = Path(__file__).parent.parent.parent
-        output_dir = root_dir / "data" / "output" / "google_video"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 导入视频处理器
-        import sys
-        sys.path.append(str(root_dir))
-        from src.core.utils.video_processor import VideoProcessor
-        
-        processor = VideoProcessor()
-        created_segments = []
-        segment_paths = []  # 存储切出的片段路径，用于批量分析
-        
-        # 第一阶段：一次性切出所有视频片段
-        st.info("🎬 第一阶段：正在切分视频片段...")
-        progress_bar = st.progress(0)
-        
-        for i, segment in enumerate(segments_data):
-            try:
-                start_time = segment['start_time']
-                end_time = segment['end_time']
-                segment_type = segment['type']
-                confidence = segment.get('confidence', 1.0)
-                
-                # 确保时间有效
-                if start_time >= end_time or end_time - start_time < 0.5:
-                    st.warning(f"跳过无效片段 {i+1}: 时间范围 {start_time:.2f}s - {end_time:.2f}s")
-                    continue
-                
-                # 创建视频片段
-                segment_filename = f"{video_id}_google_seg_{i+1:03d}_{segment_type}_{start_time:.1f}s-{end_time:.1f}s.mp4"
-                
-                # 使用VideoProcessor提取片段
-                extracted_path = processor.extract_segment(
-                    video_path=video_path,
-                    start_time=start_time,
-                    end_time=end_time,
-                    segment_index=i,
-                    semantic_type=segment_type,
-                    video_id=video_id,
-                    output_dir=str(output_dir)
-                )
-                
-                if extracted_path and os.path.exists(extracted_path):
-                    # 先创建基础片段信息（不包含AI分析）
-                    segment_info = {
-                        'index': i + 1,
-                        'type': segment_type,
-                        'start_time': start_time,
-                        'end_time': end_time,
-                        'duration': end_time - start_time,
-                        'confidence': confidence,
-                        'file_path': extracted_path,
-                        'file_size': os.path.getsize(extracted_path) / (1024*1024),  # MB
-                        'analysis': {'all_tags': []},  # 暂时为空，后续填充
-                        'tags': []  # 暂时为空，后续填充
-                    }
-                    
-                    created_segments.append(segment_info)
-                    if auto_tag:
-                        segment_paths.append(extracted_path)  # 加入待分析列表
-                    
-                    # 更新进度
-                    progress = (i + 1) / len(segments_data)
-                    progress_bar.progress(progress)
-                    
-                else:
-                    st.error(f"❌ 片段 {i+1} 创建失败")
-                    
-            except Exception as e:
-                st.error(f"❌ 处理片段 {i+1} 时出错: {str(e)}")
-                continue
-        
-        progress_bar.progress(1.0)
-        st.success(f"✅ 第一阶段完成：成功切分 {len(created_segments)} 个视频片段")
-        
-        # 第二阶段：批量进行视觉分析
-        if auto_tag and segment_paths:
-            st.info("🤖 第二阶段：正在批量分析视频内容...")
-            
-            try:
-                from streamlit_app.modules.ai_analyzers import QwenVideoAnalyzer
-                analyzer = QwenVideoAnalyzer()
-                
-                if analyzer.is_available():
-                    # 准备进度显示
-                    batch_progress = st.progress(0)
-                    batch_status = st.empty()
-                    
-                    def progress_callback(current, total, message):
-                        """进度回调函数"""
-                        progress = current / total
-                        batch_progress.progress(progress)
-                        batch_status.info(f"📊 {message}")
-                    
-                    # 批量分析所有片段
-                    batch_results = analyzer.batch_analyze_videos(
-                        segment_paths, 
-                        tag_language=tag_language,
-                        frame_rate=2.0,
-                        progress_callback=progress_callback
-                    )
-                    
-                    # 第三阶段：更新片段信息和重命名文件
-                    st.info("🏷️ 第三阶段：正在应用分析结果和重命名文件...")
-                    analysis_progress = st.progress(0)
-                    
-                    for idx, (segment_info, analysis_result) in enumerate(zip(created_segments, batch_results)):
-                        if analysis_result.get("success"):
-                            # 更新分析结果
-                            segment_info['analysis'] = analysis_result
-                            segment_info['tags'] = analysis_result['all_tags']
-                            
-                            # 如果有主要标签，重命名文件
-                            if analysis_result['all_tags']:
-                                main_tag = analysis_result['all_tags'][0]
-                                # 清理标签中的特殊字符，用于文件名
-                                safe_tag = "".join(c for c in main_tag if c.isalnum() or c in ".-_")
-                                
-                                old_path = segment_info['file_path']
-                                new_filename = f"{video_id}_google_seg_{segment_info['index']:03d}_{safe_tag}_{segment_info['start_time']:.1f}s-{segment_info['end_time']:.1f}s.mp4"
-                                new_path = output_dir / new_filename
-                                
-                                try:
-                                    import shutil
-                                    shutil.move(old_path, new_path)
-                                    segment_info['file_path'] = str(new_path)
-                                except Exception as e:
-                                    st.warning(f"重命名文件失败: {e}")
-                                    # 如果重命名失败，保持原文件名
-                            
-                            # 显示分析结果
-                            objects_str = " | ".join(analysis_result['objects'][:2]) if analysis_result['objects'] else "无"
-                            scenes_str = " | ".join(analysis_result['scenes'][:2]) if analysis_result['scenes'] else "无"
-                            people_str = " | ".join(analysis_result['people'][:2]) if analysis_result['people'] else "无"
-                            emotions_str = " | ".join(analysis_result['emotions'][:2]) if analysis_result['emotions'] else "无"
-                            
-                        else:
-                            st.warning(f"⚠️ 片段 {segment_info['index']} 分析失败: {analysis_result.get('error', '未知错误')}")
-                        
-                        # 更新进度
-                        analysis_progress.progress((idx + 1) / len(created_segments))
-                    
-                    analysis_progress.progress(1.0)
-                    st.success("✅ 第二、三阶段完成：批量视觉分析和文件重命名完成")
-                    
-                    # 显示最终结果摘要
-                    st.markdown("### 📊 分析结果摘要")
-                    successful_analyses = sum(1 for seg in created_segments if seg['tags'])
-                    st.info(f"成功分析 {successful_analyses}/{len(created_segments)} 个片段")
-                    
-                    # 显示每个片段的分析结果
-                    for segment_info in created_segments:
-                        if segment_info['tags']:
-                            objects_str = " | ".join(segment_info['analysis']['objects'][:2]) if segment_info['analysis']['objects'] else "无"
-                            scenes_str = " | ".join(segment_info['analysis']['scenes'][:2]) if segment_info['analysis']['scenes'] else "无"
-                            people_str = " | ".join(segment_info['analysis']['people'][:2]) if segment_info['analysis']['people'] else "无"
-                            emotions_str = " | ".join(segment_info['analysis']['emotions'][:2]) if segment_info['analysis']['emotions'] else "无"
-                            
-                            st.success(f"✅ 片段 {segment_info['index']}: {segment_info['type']} ({segment_info['start_time']:.1f}s-{segment_info['end_time']:.1f}s)")
-                            st.info(f"🏷️ 物体: {objects_str} | 场景: {scenes_str} | 人物: {people_str} | 情绪: {emotions_str}")
-                        else:
-                            st.success(f"✅ 片段 {segment_info['index']}: {segment_info['type']} ({segment_info['start_time']:.1f}s-{segment_info['end_time']:.1f}s)")
-                
-                else:
-                    st.error("❌ 千问2.5分析器不可用，请检查DASHSCOPE_API_KEY环境变量")
-                    st.info("已完成视频切分，但跳过了视觉分析")
-                
-            except ImportError:
-                st.error("❌ 千问视觉分析器模块未找到，请确保模块结构正确")
-                st.info("已完成视频切分，但跳过了视觉分析")
-            except Exception as e:
-                st.error(f"❌ 批量视觉分析失败: {str(e)}")
-                st.info("已完成视频切分，但视觉分析失败")
-        
-        return created_segments
-        
-    except Exception as e:
-        st.error(f"创建视频片段时出错: {str(e)}")
-        return []
 
 def create_video_segments(video_path, segments_data, video_id):
     """
-    根据分析结果创建视频片段（兼容性保留）
+    根据分析结果创建视频片段
     
     Args:
         video_path: 原始视频路径
@@ -1019,6 +740,7 @@ def create_video_segments(video_path, segments_data, video_id):
         if not os.path.exists(video_path):
             st.error(f"❌ 视频文件不存在: {video_path}")
             return []
+            
         # 创建输出目录
         from pathlib import Path
         root_dir = Path(__file__).parent.parent.parent
@@ -1033,6 +755,10 @@ def create_video_segments(video_path, segments_data, video_id):
         processor = VideoProcessor()
         created_segments = []
         
+        # 显示进度条
+        st.info("🎬 正在切分视频片段...")
+        progress_bar = st.progress(0)
+        
         for i, segment in enumerate(segments_data):
             try:
                 start_time = segment['start_time']
@@ -1044,10 +770,6 @@ def create_video_segments(video_path, segments_data, video_id):
                 if start_time >= end_time or end_time - start_time < 0.5:
                     st.warning(f"跳过无效片段 {i+1}: 时间范围 {start_time:.2f}s - {end_time:.2f}s")
                     continue
-                
-                # 生成片段文件名
-                segment_filename = f"{video_id}_google_seg_{i+1:03d}_{segment_type}_{start_time:.1f}s-{end_time:.1f}s.mp4"
-                segment_output_path = output_dir / segment_filename
                 
                 # 使用VideoProcessor提取片段
                 extracted_path = processor.extract_segment(
@@ -1075,10 +797,17 @@ def create_video_segments(video_path, segments_data, video_id):
                     st.success(f"✅ 片段 {i+1}: {segment_type} ({start_time:.1f}s-{end_time:.1f}s)")
                 else:
                     st.error(f"❌ 片段 {i+1} 创建失败")
+                
+                # 更新进度
+                progress = (i + 1) / len(segments_data)
+                progress_bar.progress(progress)
                     
             except Exception as e:
                 st.error(f"❌ 处理片段 {i+1} 时出错: {str(e)}")
                 continue
+        
+        progress_bar.progress(1.0)
+        st.success(f"✅ 视频切分完成：成功创建 {len(created_segments)} 个视频片段")
         
         return created_segments
         
@@ -1203,26 +932,16 @@ def display_results(result, shot_detection, label_detection, text_detection, fac
             
                         # 添加视频切分功能
             if video_path and video_id and segments_for_cutting:
-                st.markdown("### 🎬 智能视频片段切分与打标签")
-                
-                # 切分设置
-                with st.expander("⚙️ 切分设置", expanded=False):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        auto_tag = st.checkbox("启用智能打标签", value=True, help="为每个视频片段自动生成描述性标签")
-                    with col2:
-                        tag_language = st.selectbox("标签语言", ["中文", "英文"], index=0, help="生成标签的语言")
+                st.markdown("### 🎬 视频片段切分")
                 
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     st.info(f"将根据 {len(segments_for_cutting)} 个镜头切分视频片段")
-                    if auto_tag:
-                        st.info("🏷️ 将为每个片段分析内容并生成智能标签")
                 with col2:
                     if st.button("🔪 开始切分", type="primary"):
-                        with st.spinner("正在切分视频片段并生成标签..."):
-                            created_segments = create_video_segments_with_tags(
-                                video_path, segments_for_cutting, video_id, annotation, auto_tag, tag_language
+                        with st.spinner("正在切分视频片段..."):
+                            created_segments = create_video_segments(
+                                video_path, segments_for_cutting, video_id
                             )
                             
                             if created_segments:
@@ -1231,91 +950,21 @@ def display_results(result, shot_detection, label_detection, text_detection, fac
                                 # 显示创建的片段信息
                                 with st.expander("📁 查看创建的片段", expanded=True):
                                     for segment in created_segments:
-                                        col1, col2, col3 = st.columns([2, 2, 1])
+                                        col1, col2, col3 = st.columns([2, 1, 1])
                                         
                                         with col1:
                                             st.write(f"**片段 {segment['index']}**: {segment['type']}")
                                             st.write(f"时间: {segment['start_time']:.1f}s - {segment['end_time']:.1f}s")
                                         
                                         with col2:
-                                            if segment['tags']:
-                                                st.write(f"🏷️ 标签: {', '.join(segment['tags'][:3])}")
-                                            else:
-                                                st.write("🏷️ 无标签")
+                                            st.write(f"📁 {segment['file_size']:.1f}MB")
                                         
                                         with col3:
-                                            st.write(f"📁 {segment['file_size']:.1f}MB")
-                                            
-                                        st.markdown("---")
-                                
-                                # 使用新的表格组件显示结果
-                                try:
-                                    from streamlit_app.components.video_analysis_table import (
-                                        display_analysis_table, 
-                                        create_compact_table_view,
-                                        display_analysis_summary
-                                    )
-                                    
-                                    # 显示紧凑表格视图（类似您的图片格式）
-                                    st.markdown("### 📊 视频分析结果表格")
-                                    
-                                    # 添加表格视图选择
-                                    view_mode = st.radio(
-                                        "选择显示模式:",
-                                        ["紧凑视图", "详细视图", "分析摘要"],
-                                        index=0,
-                                        horizontal=True
-                                    )
-                                    
-                                    if view_mode == "紧凑视图":
-                                        df_compact = create_compact_table_view(created_segments)
-                                        
-                                        # CSV导出按钮
-                                        if df_compact is not None:
-                                            st.markdown("---")
-                                            col1, col2 = st.columns([3, 1])
-                                            with col2:
-                                                csv_string = df_compact.to_csv(index=False, encoding='utf-8-sig')
-                                                from datetime import datetime
-                                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                                filename = f"video_analysis_{timestamp}.csv"
-                                                
-                                                st.download_button(
-                                                    label="📄 导出CSV",
-                                                    data=csv_string,
-                                                    file_name=filename,
-                                                    mime="text/csv",
-                                                    type="primary"
-                                                )
-                                    
-                                    elif view_mode == "详细视图":
-                                        display_analysis_table(created_segments, "📊 详细分析结果")
-                                    
-                                    elif view_mode == "分析摘要":
-                                        display_analysis_summary(created_segments)
-                                        
-                                except ImportError:
-                                    st.error("❌ 无法导入表格组件，使用基础显示")
-                                    # 基础显示（原有的逻辑）
-                                    for segment in created_segments:
-                                        col1, col2, col3 = st.columns([2, 2, 1])
-                                        
-                                        with col1:
-                                            st.write(f"**片段 {segment['index']}**: {segment['type']}")
-                                            st.write(f"时间: {segment['start_time']:.1f}s - {segment['end_time']:.1f}s")
-                                        
-                                        with col2:
-                                            if segment['tags']:
-                                                st.write(f"🏷️ 标签: {', '.join(segment['tags'][:3])}")
-                                            else:
-                                                st.write("🏷️ 无标签")
-                                        
-                                        with col3:
-                                            st.write(f"📁 {segment['file_size']:.1f}MB")
-                                            
-                                        st.markdown("---")
-                    else:
-                        st.error("❌ 视频片段创建失败")
+                                            if st.button(f"📂 打开", key=f"open_shot_{segment['index']}"):
+                                                import subprocess
+                                                subprocess.run(["open", "-R", segment['file_path']], check=False)
+                            else:
+                                st.error("❌ 视频片段创建失败")
     
     # 标签检测结果
     if label_detection and annotation.segment_label_annotations:
@@ -1905,14 +1554,13 @@ def main():
     - 👤 人脸检测
     - 📦 物体跟踪
     
-    **🚀 AI视觉分析功能**:
-    - 🤖 **千问2.5智能分析**: 对每个视频片段进行独立的AI视觉识别
-    - 🎯 **多维度标签**: 物体、场景、人物、情绪四大类别智能标签
-    - ✂️ **智能视频切分**: 根据分析结果自动切分视频片段
-    - 📁 片段保存到 `data/output/google_video/` 目录
-    - 📊 提供详细的分析统计和智能标签分布
+    **🚀 核心功能**:
+    - ✂️ **智能视频切分**: 根据Google Cloud分析结果自动切分视频片段
+    - 📁 片段自动保存到 `data/output/google_video/` 目录
+    - 📊 提供详细的分析统计和可视化展示
+    - 🔍 支持镜头、标签、人脸等多种切分模式
     
-    **使用流程**: 上传视频 → Google Cloud镜头切分 → 千问2.5逐片段AI分析 → 生成智能标签
+    **使用流程**: 上传视频 → Google Cloud AI分析 → 自动切分视频片段 → 查看结果
     """)
     st.markdown("---")
     
@@ -1934,27 +1582,6 @@ def main():
         if st.button("🔄 重新上传凭据文件"):
             if upload_credentials():
                 st.rerun()
-        
-        # AI分析设置
-        st.subheader("🤖 AI视觉分析设置")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**千问2.5视觉分析**")
-            dashscope_key = os.environ.get("DASHSCOPE_API_KEY")
-            if dashscope_key:
-                st.success("✅ DASHSCOPE_API_KEY 已设置")
-                st.info("将使用千问2.5进行智能视频分析")
-            else:
-                st.warning("⚠️ 未设置 DASHSCOPE_API_KEY 环境变量")
-                st.info("请设置环境变量以启用AI视觉分析功能")
-        
-        with col2:
-            st.markdown("**分析能力**")
-            st.write("🎯 物体识别")
-            st.write("🏞️ 场景识别") 
-            st.write("👤 人物识别")
-            st.write("😊 情绪识别")
         
         # 保留兼容性
         use_deepseek_translation = False
