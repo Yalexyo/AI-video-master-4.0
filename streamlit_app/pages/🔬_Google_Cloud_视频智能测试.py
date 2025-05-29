@@ -1915,6 +1915,7 @@ def analyze_segments_with_qwen(segment_files, video_id, batch_size=2):
                         objects = analysis_result.get("objects", [])
                         scenes = analysis_result.get("scenes", [])
                         emotions = analysis_result.get("emotions", [])
+                        brands = analysis_result.get("brands", [])  # 新增品牌标签
                         
                         # 物体标签
                         for obj in objects:
@@ -1961,6 +1962,21 @@ def analyze_segments_with_qwen(segment_files, video_id, batch_size=2):
                                     "type": "情绪"
                                 })
                         
+                        # 品牌标签
+                        for brand in brands:
+                            if isinstance(brand, dict):
+                                labels.append({
+                                    "name": brand.get("name", "未知品牌"),
+                                    "confidence": brand.get("confidence", 0.8),
+                                    "type": "品牌"
+                                })
+                            else:
+                                labels.append({
+                                    "name": str(brand),
+                                    "confidence": 0.8,
+                                    "type": "品牌"
+                                })
+                        
                         # 生成内容摘要
                         summary_parts = []
                         if objects:
@@ -1972,6 +1988,9 @@ def analyze_segments_with_qwen(segment_files, video_id, batch_size=2):
                         if emotions:
                             emotion_names = [emotion if isinstance(emotion, str) else emotion.get("name", "") for emotion in emotions[:2]]
                             summary_parts.append(f"情绪: {', '.join(emotion_names)}")
+                        if brands:
+                            brand_names = [brand if isinstance(brand, str) else brand.get("name", "") for brand in brands[:2]]
+                            summary_parts.append(f"品牌: {', '.join(brand_names)}")
                         
                         summary = "; ".join(summary_parts) if summary_parts else "视频片段内容分析"
                         

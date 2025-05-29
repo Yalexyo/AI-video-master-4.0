@@ -8,6 +8,7 @@ import os
 import logging
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ class QwenVideoAnalyzer:
                 "scenes": [],
                 "people": [],
                 "emotions": [],
+                "brands": [],
                 "all_tags": []
             }
         
@@ -85,6 +87,7 @@ class QwenVideoAnalyzer:
                 "scenes": [],
                 "people": [],
                 "emotions": [],
+                "brands": [],
                 "all_tags": []
             }
         
@@ -114,6 +117,7 @@ class QwenVideoAnalyzer:
                     "scenes": [],
                     "people": [],
                     "emotions": [],
+                    "brands": [],
                     "all_tags": []
                 }
                 
@@ -126,21 +130,24 @@ class QwenVideoAnalyzer:
                 "scenes": [],
                 "people": [],
                 "emotions": [],
+                "brands": [],
                 "all_tags": []
             }
     
     def _build_analysis_prompt(self, tag_language: str) -> str:
         """构建分析提示词"""
-        return """视频内容分析，提取三类标签：
+        return """视频内容分析，提取以下四类标签：
 
 物体：人物、婴幼儿用品、日常物品
 场景：室内外环境
 情绪：人物表情状态
+品牌：奶粉罐、奶瓶、奶粉成分标签等婴幼儿品牌产品
 
 输出格式（用"|"分隔）：
 物体：标签1|标签2|标签3
 场景：标签1|标签2
 情绪：标签1|标签2
+品牌：标签1|标签2
 
 无法确定时输出"无"。"""
     
@@ -155,6 +162,7 @@ class QwenVideoAnalyzer:
             'scenes': [],
             'people': [],
             'emotions': [],
+            'brands': [],  # 新增品牌标签
             'all_tags': []
         }
         
@@ -193,6 +201,8 @@ class QwenVideoAnalyzer:
                                 analysis_result['people'].extend(tags)
                             elif 'emotion' in category or '情绪' in category or 'expression' in category or '表情' in category:
                                 analysis_result['emotions'].extend(tags)
+                            elif 'brand' in category or '品牌' in category:
+                                analysis_result['brands'].extend(tags)
                             else:
                                 # 如果无法归类，根据内容推测分类
                                 for tag in tags:
@@ -202,6 +212,8 @@ class QwenVideoAnalyzer:
                                         analysis_result['emotions'].append(tag)
                                     elif any(keyword in tag for keyword in ['客厅', '厨房', '卧室', '公园', '室内', '室外']):
                                         analysis_result['scenes'].append(tag)
+                                    elif any(keyword in tag for keyword in ['奶粉罐', '奶瓶', '奶粉', '成分标签', '营养标签', '配料表', '品牌标识', '商标']):
+                                        analysis_result['brands'].append(tag)
                                     else:
                                         analysis_result['objects'].append(tag)
             
@@ -209,7 +221,8 @@ class QwenVideoAnalyzer:
             all_tags = (analysis_result['objects'] + 
                       analysis_result['scenes'] + 
                       analysis_result['people'] + 
-                      analysis_result['emotions'])
+                      analysis_result['emotions'] + 
+                      analysis_result['brands'])
             analysis_result['all_tags'] = list(set(all_tags))  # 去重
             
         except Exception as e:
@@ -276,6 +289,7 @@ class QwenVideoAnalyzer:
                     "scenes": [],
                     "people": [],
                     "emotions": [],
+                    "brands": [],
                     "all_tags": [],
                     "video_path": video_path,
                     "video_name": os.path.basename(video_path)
@@ -306,12 +320,11 @@ class QwenVideoAnalyzer:
         Returns:
             各类别的高频标签字典
         """
-        from collections import Counter
-        
         all_objects = []
         all_scenes = []
         all_people = []
         all_emotions = []
+        all_brands = []
         
         for result in analysis_results:
             if result.get("success"):
@@ -319,12 +332,14 @@ class QwenVideoAnalyzer:
                 all_scenes.extend(result.get('scenes', []))
                 all_people.extend(result.get('people', []))
                 all_emotions.extend(result.get('emotions', []))
+                all_brands.extend(result.get('brands', []))
         
         return {
             'objects': Counter(all_objects).most_common(top_n),
             'scenes': Counter(all_scenes).most_common(top_n),
             'people': Counter(all_people).most_common(top_n),
-            'emotions': Counter(all_emotions).most_common(top_n)
+            'emotions': Counter(all_emotions).most_common(top_n),
+            'brands': Counter(all_brands).most_common(top_n)
         }
     
     def _analyze_video_file(
