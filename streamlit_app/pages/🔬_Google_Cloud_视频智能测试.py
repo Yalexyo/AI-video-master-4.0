@@ -1106,204 +1106,41 @@ def display_results(result, shot_detection, label_detection, object_tracking, us
             
             st.info("💡 注意：少量误差（<0.1秒）是正常的，可能由于时间精度造成")
         
-        # 添加镜头聚类功能
-        st.markdown("### 🧠 智能镜头聚类")
+        # 显示原始镜头表格
+        st.markdown("### 📊 镜头切分结果详情")
         
-        # 分析镜头特征，给出聚类建议
-        short_shots = [s for s in shots if s['duration'] < 2.0]
-        fragmented_ratio = len(short_shots) / len(shots) * 100
-        
-        if fragmented_ratio > 50:
-            st.warning(f"⚠️ 检测到 {len(short_shots)} 个短镜头（<2秒），占比 {fragmented_ratio:.1f}%")
-            st.info("💡 建议使用镜头聚类功能合并相似的短镜头，生成更有意义的场景")
-        elif fragmented_ratio > 30:
-            st.info(f"📊 检测到 {len(short_shots)} 个短镜头，占比 {fragmented_ratio:.1f}%")
-            st.info("💡 可以考虑使用镜头聚类功能优化分段结果")
-        else:
-            st.success(f"✅ 镜头长度分布良好，短镜头占比仅 {fragmented_ratio:.1f}%")
-        
-        # 聚类控制面板
-        with st.expander("🔧 镜头聚类设置", expanded=True):
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                similarity_threshold = st.slider(
-                    "相似度阈值",
-                    min_value=0.5,
-                    max_value=0.9,
-                    value=0.75,
-                    step=0.05,
-                    help="越高越严格，只合并非常相似的镜头"
-                )
-            
-            with col2:
-                min_cluster_duration = st.slider(
-                    "最小场景时长（秒）",
-                    min_value=2.0,
-                    max_value=10.0,
-                    value=3.0,
-                    step=0.5,
-                    help="聚类后每个场景的最小持续时间"
-                )
-            
-            with col3:
-                max_clusters = st.selectbox(
-                    "最大场景数",
-                    options=[None, 3, 5, 8, 10, 15],
-                    index=0,
-                    help="限制最多生成多少个场景（None为自动）"
-                )
-            
-            cluster_button_col1, cluster_button_col2 = st.columns([1, 3])
-            with cluster_button_col1:
-                use_clustering = st.button("🧠 执行镜头聚类", type="secondary", key="shot_clustering")
-            with cluster_button_col2:
-                if use_clustering:
-                    st.info("正在基于视觉特征进行镜头聚类...")
-        
-        # 执行镜头聚类
-        clustered_scenes = None
-        if use_clustering and video_path:
-            try:
-                from streamlit_app.modules.video_clustering import cluster_video_shots
-                
-                with st.spinner("🔍 正在提取视觉特征并执行聚类..."):
-                    clustered_scenes = cluster_video_shots(
-                        shots=shots,
-                        video_path=video_path,
-                        similarity_threshold=similarity_threshold,
-                        min_cluster_duration=min_cluster_duration,
-                        max_clusters=max_clusters
-                    )
-                
-                if clustered_scenes:
-                    st.success(f"✅ 聚类完成！{len(shots)} 个镜头 → {len(clustered_scenes)} 个场景")
-                    
-                    # 显示聚类结果对比
-                    st.markdown("#### 📊 聚类结果对比")
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        reduction_ratio = (len(shots) - len(clustered_scenes)) / len(shots) * 100
-                        st.metric("片段减少", f"{reduction_ratio:.1f}%")
-                    with col2:
-                        avg_scene_duration = sum(s['duration'] for s in clustered_scenes) / len(clustered_scenes)
-                        st.metric("平均场景时长", f"{avg_scene_duration:.1f}s")
-                    with col3:
-                        total_shot_count = sum(s['shot_count'] for s in clustered_scenes)
-                        st.metric("合并镜头数", total_shot_count)
-                    with col4:
-                        longest_scene = max(s['duration'] for s in clustered_scenes)
-                        st.metric("最长场景", f"{longest_scene:.1f}s")
-                    
-                else:
-                    st.error("❌ 镜头聚类失败")
-                    
-            except ImportError as e:
-                st.error("❌ 镜头聚类功能不可用，缺少必要依赖")
-                st.info("请安装：pip install scikit-learn opencv-python")
-            except Exception as e:
-                st.error(f"❌ 镜头聚类失败: {str(e)}")
-        
-        # 准备表格数据 - 根据是否使用聚类选择数据源
-        display_data = clustered_scenes if clustered_scenes else shots
+        shots_data = []
         segments_for_cutting = []
         
-        if clustered_scenes:
-            # 显示聚类后的场景表格
-            st.markdown("#### 🎭 聚类后的场景列表")
+        for shot in shots:
+            shots_data.append({
+                "镜头": f"镜头 {shot['index']}",
+                "开始时间 (秒)": f"{shot['start_time']:.2f}",
+                "结束时间 (秒)": f"{shot['end_time']:.2f}",
+                "持续时间 (秒)": f"{shot['duration']:.2f}"
+            })
             
-            scenes_data = []
-            for scene in clustered_scenes:
-                scenes_data.append({
-                    "场景": f"场景 {scene['index']}",
-                    "开始时间 (秒)": f"{scene['start_time']:.2f}",
-                    "结束时间 (秒)": f"{scene['end_time']:.2f}",
-                    "持续时间 (秒)": f"{scene['duration']:.2f}",
-                    "包含镜头数": scene['shot_count'],
-                    "包含镜头": ', '.join([f"镜头{shot['index']}" for shot in scene['shots']])
-                })
-                
-                # 使用严格时间连续切分
-                from streamlit_app.modules.video_clustering import split_clustered_scene_to_time_continuous_segments
-                continuous_segments = split_clustered_scene_to_time_continuous_segments(scene, max_gap=0.1)
-                
-                # 检查是否返回了有效的结果
-                if continuous_segments is None:
-                    logger.warning(f"场景 {scene['index']} 的时间连续切分返回None，使用默认处理")
-                    continuous_segments = [{
-                        'start_time': scene['start_time'],
-                        'end_time': scene['end_time'],
-                        'type': scene['type'],
-                        'confidence': scene.get('confidence', 0.95)
-                    }]
-                
-                # 将时间连续的片段添加到切分列表
-                for seg_idx, segment in enumerate(continuous_segments):
-                    segments_for_cutting.append({
-                        'start_time': segment['start_time'],
-                        'end_time': segment['end_time'],
-                        'type': f"{scene['type']}_片段{seg_idx+1}",
-                        'confidence': segment['confidence'],
-                        'original_scene_index': scene['index'],
-                        'is_time_continuous': True
-                    })
-            
-            # 显示时间连续性信息
-            if len(segments_for_cutting) > len(clustered_scenes):
-                st.info(f"⚠️ 检测到时间不连续的场景，已自动分割: {len(clustered_scenes)} 个场景 → {len(segments_for_cutting)} 个时间连续片段")
-                st.success("✅ 所有切分片段都保证时间严格连续 (间隔<0.1秒)")
-            else:
-                st.success("✅ 所有场景内部时间连续，无需额外分割")
-            
-            if scenes_data:
-                import pandas as pd
-                df_scenes = pd.DataFrame(scenes_data)
-                st.dataframe(
-                    df_scenes,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "场景": st.column_config.TextColumn("场景", width="small"),
-                        "开始时间 (秒)": st.column_config.NumberColumn("开始时间 (秒)", width="medium"),
-                        "结束时间 (秒)": st.column_config.NumberColumn("结束时间 (秒)", width="medium"),
-                        "持续时间 (秒)": st.column_config.NumberColumn("持续时间 (秒)", width="medium"),
-                        "包含镜头数": st.column_config.NumberColumn("包含镜头数", width="small"),
-                        "包含镜头": st.column_config.TextColumn("包含镜头", width="large")
-                    }
-                )
-        else:
-            # 显示原始镜头表格
-            shots_data = []
-            for shot in shots:
-                shots_data.append({
-                    "镜头": f"镜头 {shot['index']}",
-                    "开始时间 (秒)": f"{shot['start_time']:.2f}",
-                    "结束时间 (秒)": f"{shot['end_time']:.2f}",
-                    "持续时间 (秒)": f"{shot['duration']:.2f}"
-                })
-                
-                segments_for_cutting.append({
-                    'start_time': shot['start_time'],
-                    'end_time': shot['end_time'],
-                    'type': shot['type'],
-                    'confidence': shot['confidence']
-                })
-            
-            if shots_data:
-                import pandas as pd
-                df = pd.DataFrame(shots_data)
-                st.dataframe(
-                    df, 
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "镜头": st.column_config.TextColumn("镜头", width="small"),
-                        "开始时间 (秒)": st.column_config.NumberColumn("开始时间 (秒)", width="medium"),
-                        "结束时间 (秒)": st.column_config.NumberColumn("结束时间 (秒)", width="medium"),
-                        "持续时间 (秒)": st.column_config.NumberColumn("持续时间 (秒)", width="medium")
-                    }
-                )
+            segments_for_cutting.append({
+                'start_time': shot['start_time'],
+                'end_time': shot['end_time'],
+                'type': shot['type'],
+                'confidence': shot['confidence']
+            })
+        
+        if shots_data:
+            import pandas as pd
+            df = pd.DataFrame(shots_data)
+            st.dataframe(
+                df, 
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "镜头": st.column_config.TextColumn("镜头", width="small"),
+                    "开始时间 (秒)": st.column_config.NumberColumn("开始时间 (秒)", width="medium"),
+                    "结束时间 (秒)": st.column_config.NumberColumn("结束时间 (秒)", width="medium"),
+                    "持续时间 (秒)": st.column_config.NumberColumn("持续时间 (秒)", width="medium")
+                }
+            )
     
     # 标签检测结果
     if label_detection and annotation.segment_label_annotations:
@@ -1619,27 +1456,21 @@ def display_results(result, shot_detection, label_detection, object_tracking, us
     
     # 添加视频切分功能
     if video_path and video_id and segments_for_cutting:
-        segment_type = "场景" if clustered_scenes else "镜头"
-        st.markdown(f"### 🎬 视频{segment_type}切分")
+        st.markdown(f"### 🎬 视频镜头切分")
         
         col1, col2 = st.columns([3, 1])
         with col1:
-            st.info(f"将根据 {len(segments_for_cutting)} 个{segment_type}切分视频片段")
-            if clustered_scenes:
-                st.write(f"📁 保存路径: `data/results/{video_id}_merge/`")
-                st.info("💡 基于聚类后的场景进行切分，片段更长更有意义")
-            else:
-                st.write(f"📁 保存路径: `data/output/google_video/{video_id}/`")
+            st.info(f"将根据 {len(segments_for_cutting)} 个镜头切分视频片段")
+            st.write(f"📁 保存路径: `data/output/google_video/{video_id}/`")
         with col2:
-            cut_button_key = "cut_clustered_scenes" if clustered_scenes else "cut_original_shots"
-            if st.button("🔪 开始切分", type="primary", key=cut_button_key):
-                with st.spinner(f"正在切分视频{segment_type}..."):
+            if st.button("🔪 开始切分", type="primary", key="cut_original_shots"):
+                with st.spinner("正在切分视频镜头..."):
                     created_segments = create_video_segments(
-                        video_path, segments_for_cutting, video_id, is_clustered=clustered_scenes
+                        video_path, segments_for_cutting, video_id, is_clustered=False
                     )
                     
                     if created_segments:
-                        st.success(f"✅ 成功创建 {len(created_segments)} 个{segment_type}片段")
+                        st.success(f"✅ 成功创建 {len(created_segments)} 个镜头片段")
                         
                         # 显示创建的片段信息
                         with st.expander("📁 查看创建的片段", expanded=True):
@@ -1654,7 +1485,7 @@ def display_results(result, shot_detection, label_detection, object_tracking, us
                                     st.write(f"📁 {segment['file_size']:.1f}MB")
                                 
                                 with col3:
-                                    if st.button(f"📂 打开", key=f"open_{segment_type}_{segment['index']}"):
+                                    if st.button(f"📂 打开", key=f"open_shot_{segment['index']}"):
                                         import subprocess
                                         try:
                                             subprocess.run(["open", "-R", segment['file_path']], check=False)
@@ -1750,11 +1581,10 @@ def main():
     
     **🚀 核心功能**:
     - ✂️ **智能视频切分**: 根据镜头检测结果自动切分视频片段
-    - 🧠 **智能镜头聚类**: 基于视觉特征将相似镜头合并成场景
     - 📁 片段自动保存到 `data/output/google_video/` 目录
     - 📊 提供详细的分析统计和可视化展示
     
-    **使用流程**: 上传视频 → Google Cloud AI分析 → 聚类优化(可选) → 视频切分 → 在'🏷️ 片段标签分析'模块进行AI标注
+    **使用流程**: 上传视频 → Google Cloud AI分析 → 视频切分 → 在'🏷️ 片段标签分析'模块进行AI标注
     """)
     st.markdown("---")
     
