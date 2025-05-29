@@ -1275,35 +1275,35 @@ def display_results(result, shot_detection, label_detection, object_tracking, us
         else:
             # 显示原始镜头表格
             shots_data = []
-        for shot in shots:
-            shots_data.append({
-                "镜头": f"镜头 {shot['index']}",
-                "开始时间 (秒)": f"{shot['start_time']:.2f}",
-                "结束时间 (秒)": f"{shot['end_time']:.2f}",
-                "持续时间 (秒)": f"{shot['duration']:.2f}"
-            })
+            for shot in shots:
+                shots_data.append({
+                    "镜头": f"镜头 {shot['index']}",
+                    "开始时间 (秒)": f"{shot['start_time']:.2f}",
+                    "结束时间 (秒)": f"{shot['end_time']:.2f}",
+                    "持续时间 (秒)": f"{shot['duration']:.2f}"
+                })
+                
+                segments_for_cutting.append({
+                    'start_time': shot['start_time'],
+                    'end_time': shot['end_time'],
+                    'type': shot['type'],
+                    'confidence': shot['confidence']
+                })
             
-            segments_for_cutting.append({
-                'start_time': shot['start_time'],
-                'end_time': shot['end_time'],
-                'type': shot['type'],
-                'confidence': shot['confidence']
-            })
-        
-        if shots_data:
-            import pandas as pd
-            df = pd.DataFrame(shots_data)
-            st.dataframe(
-                df, 
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "镜头": st.column_config.TextColumn("镜头", width="small"),
-                    "开始时间 (秒)": st.column_config.NumberColumn("开始时间 (秒)", width="medium"),
-                    "结束时间 (秒)": st.column_config.NumberColumn("结束时间 (秒)", width="medium"),
-                    "持续时间 (秒)": st.column_config.NumberColumn("持续时间 (秒)", width="medium")
-                }
-            )
+            if shots_data:
+                import pandas as pd
+                df = pd.DataFrame(shots_data)
+                st.dataframe(
+                    df, 
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "镜头": st.column_config.TextColumn("镜头", width="small"),
+                        "开始时间 (秒)": st.column_config.NumberColumn("开始时间 (秒)", width="medium"),
+                        "结束时间 (秒)": st.column_config.NumberColumn("结束时间 (秒)", width="medium"),
+                        "持续时间 (秒)": st.column_config.NumberColumn("持续时间 (秒)", width="medium")
+                    }
+                )
     
     # 标签检测结果
     if label_detection and annotation.segment_label_annotations:
