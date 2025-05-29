@@ -1,42 +1,56 @@
-# 视频分析工作流程优化
+# AI视频分析工作流程优化
 
 ## 🚀 新优化策略
 
 ### 原有问题
-- **边切边分析**: 每个片段切出来后立即进行视觉分析，效率低下
-- **网络连接错误**: 代理配置问题导致DashScope连接失败
-- **数据类型错误**: API响应处理不当
+- **串行处理**: 每个操作步骤独立执行，效率低下
+- **网络连接错误**: 代理配置问题导致API连接失败
+- **数据格式不统一**: 分析结果展示方式不一致
 
 ### 新的三阶段策略
 
-#### 第一阶段：🎬 智能分段
-1. 使用Google Cloud Video Intelligence API分析整个视频
-2. 一次性完成镜头检测、标签识别等基础分析
-3. 获得完整的分段信息
+#### 第一阶段：🔍 智能视频分析
+1. 使用DashScope API进行语音转录和内容理解
+2. 基于Qwen-VL模型的视觉内容分析
+3. 自动生成语义分段和内容摘要
 
-#### 第二阶段：✂️ 批量切分
-1. 根据分析结果一次性切出所有视频片段
-2. 提高切分效率，减少重复操作
-3. 显示切分进度
+#### 第二阶段：🔬 Google Cloud增强分析
+1. 集成Google Cloud Video Intelligence API
+2. 高精度的对象检测和场景识别
+3. 置信度评分和标签生成
 
-#### 第三阶段：🤖 批量视觉分析
-1. 使用千问2.5对所有片段进行批量视觉分析
-2. 实时显示分析进度
-3. 智能标签生成和文件重命名
+#### 第三阶段：📊 结果整合与导出
+1. 统一的表格格式展示
+2. 多格式数据导出（CSV、JSON、Excel）
+3. 可视化数据统计和分析
 
 ## 🔧 故障排除
 
 ### 常见问题
 
-#### 1. 代理连接错误
+#### 1. API密钥未配置
+```bash
+DASHSCOPE_API_KEY 未设置
+GOOGLE_APPLICATION_CREDENTIALS 未设置
+```
+
+**解决方案:**
+1. 访问"⚙️ 设置"页面配置API密钥
+2. 或通过环境变量设置：
+```bash
+export DASHSCOPE_API_KEY='your_api_key_here'
+export GOOGLE_APPLICATION_CREDENTIALS='path/to/credentials.json'
+```
+
+#### 2. 代理连接错误
 ```bash
 ProxyError('Unable to connect to proxy', RemoteDisconnected('Remote end closed connection without response'))
 ```
 
 **解决方案:**
 ```bash
-# 方法1: 使用快速修复脚本
-./scripts/quick_fix.sh
+# 方法1: 使用网络诊断页面
+# 访问 "🔧 网络诊断" 页面，点击"禁用代理"
 
 # 方法2: 手动禁用代理
 export USE_PROXY=false
@@ -45,54 +59,32 @@ unset HTTPS_PROXY
 unset NO_PROXY
 ```
 
-#### 2. 数据类型错误
+#### 3. 视频格式不支持
 ```bash
-'list' object has no attribute 'split'
+视频文件格式错误或损坏
 ```
 
 **解决方案:**
-- 这个问题已在最新版本中修复
-- 重新启动应用程序即可
-
-#### 3. API密钥问题
+- 支持的格式：MP4, AVI, MOV, MKV, WMV
+- 使用FFmpeg转换格式：
 ```bash
-DASHSCOPE_API_KEY 未设置
-```
-
-**解决方案:**
-```bash
-export DASHSCOPE_API_KEY='your_api_key_here'
+ffmpeg -i input.avi -c:v libx264 -c:a aac output.mp4
 ```
 
 ### 🛠️ 诊断工具
 
-#### 1. 网络诊断页面
+#### 1. 系统状态检查
+在主页和分析页面都提供实时的系统状态检查：
+- Google Cloud凭据状态
+- DashScope API密钥状态
+- 详细的配置指南
+
+#### 2. 网络诊断页面
 访问应用中的 "🔧 网络诊断" 页面，提供：
 - 环境变量检查
 - 网络连接测试
 - 快速修复按钮
 - 配置管理
-
-#### 2. 命令行测试工具
-```bash
-# 完整网络测试
-python scripts/test_network.py
-
-# 详细输出
-python scripts/test_network.py -v
-
-# 自动修复
-python scripts/test_network.py --fix
-
-# 保存测试结果
-python scripts/test_network.py -o test_results.json
-```
-
-#### 3. 快速修复脚本
-```bash
-# 运行快速修复
-source scripts/quick_fix.sh
-```
 
 ## 📊 性能优化
 
@@ -112,7 +104,8 @@ export MAX_RETRIES=3
 export USE_PROXY=false
 
 # API配置
-export DASHSCOPE_API_KEY='your_api_key'
+export DASHSCOPE_API_KEY='your_dashscope_api_key'
+export GOOGLE_APPLICATION_CREDENTIALS='path/to/google-credentials.json'
 ```
 
 ## 🎯 使用指南
@@ -122,38 +115,50 @@ export DASHSCOPE_API_KEY='your_api_key'
 streamlit run streamlit_app/主页.py
 ```
 
-### 2. 进行视频分析
-1. 上传视频文件
-2. 选择Google Cloud智能分析
-3. 等待分析完成
-4. 选择"开始切分"并启用智能标签
-5. 观察三阶段处理过程
+### 2. 基础视频分析
+1. 访问"🔍 视频分析"页面
+2. 上传视频文件
+3. 选择分析参数
+4. 等待语音转录和语义分析完成
+5. 查看分析结果
 
-### 3. 故障排除
+### 3. 高精度分析
+1. 访问"🔬 Google Cloud 视频智能测试"页面
+2. 确保Google Cloud凭据已配置
+3. 上传视频进行分析
+4. 选择分析类型（Qwen或Google Cloud）
+5. 查看标准表格格式结果
+
+### 4. 故障排除
 如遇到连接问题：
-1. 访问"🔧 网络诊断"页面
-2. 点击"禁用代理"按钮
-3. 重新启动应用程序
-4. 或运行 `source scripts/quick_fix.sh`
+1. 检查主页的系统状态
+2. 访问"🔧 网络诊断"页面
+3. 点击相关修复按钮
+4. 重新启动应用程序
 
 ## 📈 监控指标
 
 ### 处理效率
-- 切分阶段：通常几秒到几分钟
-- 批量分析：根据片段数量和网络状况
-- 总体时间：相比原方案减少30-50%
+- 语音转录：根据视频长度和网络状况
+- 视觉分析：根据片段数量和模型复杂度
+- 数据导出：通常几秒完成
 
 ### 成功率
 - 网络连接：禁用代理后通常>95%
 - 视觉分析：API可用时>90%
-- 文件处理：>99%
+- 数据处理：>99%
+
+### 数据质量
+- 置信度评分：🟢 高(0.8+) 🟡 中(0.5-0.8) 🔴 低(<0.5)
+- 标签准确性：根据模型和内容类型变化
+- 导出完整性：支持多格式验证
 
 ## 🔮 未来改进
 
-1. **并行处理**: 视频切分和分析的并行化
+1. **并行处理**: 多视频同时分析
 2. **缓存机制**: 分析结果缓存和复用
 3. **智能重试**: 网络失败的指数退避重试
-4. **批量优化**: 更大规模的批量处理能力
+4. **模型优化**: 更准确的本地化模型
 
 ---
 

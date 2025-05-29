@@ -261,25 +261,25 @@ class VideoSegmenter:
             
             if not use_new_analyzer:
                 # 使用原有的转录方法
-                from src.core.transcribe_core import transcribe_audio
+            from src.core.transcribe_core import transcribe_audio
 
-                # 如果有热词ID，使用它
-                hotword_id = self.hotword_id if self.hotword_id else None
+            # 如果有热词ID，使用它
+            hotword_id = self.hotword_id if self.hotword_id else None
 
-                # 使用临时目录
-                output_dir = self.temp_dir
+            # 使用临时目录
+            output_dir = self.temp_dir
 
-                # 使用transcribe_core进行转录
-                transcript_json = transcribe_audio(
-                    audio_path, hotword_id=hotword_id, output_dir=output_dir)
+            # 使用transcribe_core进行转录
+            transcript_json = transcribe_audio(
+    audio_path, hotword_id=hotword_id, output_dir=output_dir)
 
-                if not transcript_json or not os.path.exists(transcript_json):
-                    logger.error("音频转录失败，无法获取有效转录结果")
-                    raise RuntimeError("音频转录失败，无法获取有效转录结果")
+            if not transcript_json or not os.path.exists(transcript_json):
+                logger.error("音频转录失败，无法获取有效转录结果")
+                raise RuntimeError("音频转录失败，无法获取有效转录结果")
 
-                # 读取转录结果
-                with open(transcript_json, 'r', encoding='utf-8') as f:
-                    transcript_data = json.load(f)
+            # 读取转录结果
+            with open(transcript_json, 'r', encoding='utf-8') as f:
+                transcript_data = json.load(f)
 
             logger.debug(f"转录结果格式: {json.dumps(list(transcript_data.keys()))}")
 

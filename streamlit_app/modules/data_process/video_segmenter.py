@@ -163,13 +163,13 @@ class VideoSegmenter:
                 # 回退到原有的转录方法
                 from src.core.transcribe_core import transcribe_audio_with_timestamp
                 
-                transcript_data = transcribe_audio_with_timestamp(
-                    audio_path, 
-                    output_json=output_json
-                )
-                
-                logger.info(f"语音时间戳分析成功，结果保存至: {output_json}")
-                return transcript_data
+            transcript_data = transcribe_audio_with_timestamp(
+                audio_path, 
+                output_json=output_json
+            )
+            
+            logger.info(f"语音时间戳分析成功，结果保存至: {output_json}")
+            return transcript_data
                 
         except Exception as e:
             logger.error(f"语音时间戳分析失败: {str(e)}")
@@ -381,7 +381,7 @@ def _cached_video_processing_and_segmentation(video_path, file_mtime, file_size,
     # 如果DashScope失败，使用原有的转录方法
     if not transcript_json_path:
         from src.core.transcribe_core import process_video as transcribe_process_video
-        transcript_json_path = transcribe_process_video(video_path, output_dir=asr_temp_dir)
+    transcript_json_path = transcribe_process_video(video_path, output_dir=asr_temp_dir)
     
     # 加载转录结果
     transcript_data_corrected = None

@@ -131,72 +131,18 @@ class QwenVideoAnalyzer:
     
     def _build_analysis_prompt(self, tag_language: str) -> str:
         """构建分析提示词"""
-        if tag_language == "中文":
-            return """你是一位专业的视频内容分析助手，擅长识别视频片段中的视觉元素。请根据提供的视频片段，提取以下三类标签：
+        return """视频内容分析，提取三类标签：
 
-1. 🍼 对象检测（Object）：识别画面中出现的主要物体或人物角色
-   - 人物：婴儿、宝宝、妈妈、爸爸、儿童、成人、老人
-   - 奶粉相关：奶瓶、奶粉罐、奶嘴、学饮杯、围嘴、奶粉勺、储奶袋
-   - 婴儿用品：婴儿床、婴儿车、尿布、玩具、安全座椅、婴儿背带
-   - 日常物品：桌子、椅子、沙发、手机、杯子、碗、勺子、食物
-   - 其他重要物体
+物体：人物、婴幼儿用品、日常物品
+场景：室内外环境
+情绪：人物表情状态
 
-2. 🏠 场景识别（Scene）：判断当前片段的拍摄场景或环境
-   - 室内场景：客厅、厨房、卧室、婴儿房、浴室、书房
-   - 室外场景：公园、花园、街道、商场、医院、游乐场
-   - 特殊场景：工作室、超市、母婴店、车内、办公室
-   - 环境描述：明亮的、温馨的、整洁的、舒适的
-
-3. 😊 表情/情绪（Expression）：检测画面中人物明显的情绪和表情
-   - 正面情绪：开心、微笑、大笑、满足、兴奋、愉悦
-   - 负面情绪：哭泣、难过、生气、焦虑、担心、疲倦
-   - 中性状态：专注、平静、认真、思考、观察、说话
-   - 互动情绪：亲密、关爱、逗弄、安抚、陪伴
-
-请按以下格式返回分析结果，每个类别用"|"分隔标签，标签要简洁（2-4个字）：
+输出格式（用"|"分隔）：
 物体：标签1|标签2|标签3
 场景：标签1|标签2
 情绪：标签1|标签2
 
-示例输出：
-物体：奶瓶|宝宝|妈妈
-场景：客厅|温馨
-情绪：开心|微笑
-
-如果某一类别无法确定，请输出"无"。请确保标签简洁明了，便于后续处理。"""
-        else:
-            return """You are a professional video content analysis assistant, skilled at identifying visual elements in video segments. Please analyze the provided video segment and extract the following three types of tags:
-
-1. 🍼 Object Detection: Identify main objects or characters in the frame
-   - People: baby, infant, mother, father, child, adult, elderly
-   - Formula-related: bottle, formula can, pacifier, sippy cup, bib, formula spoon, milk storage bag
-   - Baby items: crib, stroller, diaper, toys, car seat, baby carrier
-   - Daily items: table, chair, sofa, phone, cup, bowl, spoon, food
-   - Other important objects
-
-2. 🏠 Scene Recognition: Determine the filming scene or environment
-   - Indoor scenes: living room, kitchen, bedroom, nursery, bathroom, study
-   - Outdoor scenes: park, garden, street, mall, hospital, playground
-   - Special scenes: studio, supermarket, baby store, car interior, office
-   - Environment: bright, warm, tidy, comfortable
-
-3. 😊 Expression/Emotion: Detect obvious emotions and expressions of people
-   - Positive emotions: happy, smiling, laughing, satisfied, excited, joyful
-   - Negative emotions: crying, sad, angry, anxious, worried, tired
-   - Neutral states: focused, calm, serious, thinking, observing, talking
-   - Interactive emotions: intimate, caring, teasing, soothing, accompanying
-
-Please return results in this format, separating tags with "|", keep tags concise (2-4 words):
-Objects: tag1|tag2|tag3
-Scenes: tag1|tag2
-Expressions: tag1|tag2
-
-Example output:
-Objects: bottle|baby|mother
-Scenes: living room|cozy
-Expressions: happy|smiling
-
-If a category cannot be determined, output "none". Ensure tags are concise and clear for processing."""
+无法确定时输出"无"。"""
     
     def _parse_analysis_result(
         self, 
@@ -430,7 +376,7 @@ If a category cannot be determined, output "none". Ensure tags are concise and c
             content = [{"text": prompt}]
             
             # 添加图像（限制数量以避免token超限）
-            max_frames = min(len(encoded_frames), 10)  # 最多10帧
+            max_frames = min(len(encoded_frames), 6)  # 最多6帧
             for i in range(0, max_frames):
                 content.append({"image": encoded_frames[i]})
             
@@ -520,7 +466,7 @@ If a category cannot be determined, output "none". Ensure tags are concise and c
                 frame_count += 1
                 
                 # 限制最大帧数
-                if len(frames) >= 20:  # 最多20帧
+                if len(frames) >= 8:  # 最多8帧
                     break
             
             cap.release()
