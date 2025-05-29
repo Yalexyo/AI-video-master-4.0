@@ -1908,102 +1908,33 @@ def analyze_segments_with_qwen(segment_files, video_id, batch_size=2):
                     if analysis_result and analysis_result.get("success"):
                         success_count += 1
                         
-                        # 提取标签信息
-                        labels = []
-                        
-                        # 从不同分析结果中提取标签
-                        objects = analysis_result.get("objects", [])
-                        scenes = analysis_result.get("scenes", [])
-                        emotions = analysis_result.get("emotions", [])
-                        brands = analysis_result.get("brands", [])  # 新增品牌标签
-                        
-                        # 物体标签
-                        for obj in objects:
-                            if isinstance(obj, dict):
-                                labels.append({
-                                    "name": obj.get("name", "未知物体"),
-                                    "confidence": obj.get("confidence", 0.8),
-                                    "type": "物体"
-                                })
-                            else:
-                                labels.append({
-                                    "name": str(obj),
-                                    "confidence": 0.8,
-                                    "type": "物体"
-                                })
-                        
-                        # 场景标签
-                        for scene in scenes:
-                            if isinstance(scene, dict):
-                                labels.append({
-                                    "name": scene.get("name", "未知场景"),
-                                    "confidence": scene.get("confidence", 0.8),
-                                    "type": "场景"
-                                })
-                            else:
-                                labels.append({
-                                    "name": str(scene),
-                                    "confidence": 0.8,
-                                    "type": "场景"
-                                })
-                        
-                        # 情绪标签
-                        for emotion in emotions:
-                            if isinstance(emotion, dict):
-                                labels.append({
-                                    "name": emotion.get("name", "未知情绪"),
-                                    "confidence": emotion.get("confidence", 0.8),
-                                    "type": "情绪"
-                                })
-                            else:
-                                labels.append({
-                                    "name": str(emotion),
-                                    "confidence": 0.8,
-                                    "type": "情绪"
-                                })
-                        
-                        # 品牌标签
-                        for brand in brands:
-                            if isinstance(brand, dict):
-                                labels.append({
-                                    "name": brand.get("name", "未知品牌"),
-                                    "confidence": brand.get("confidence", 0.8),
-                                    "type": "品牌"
-                                })
-                            else:
-                                labels.append({
-                                    "name": str(brand),
-                                    "confidence": 0.8,
-                                    "type": "品牌"
-                                })
-                        
-                        # 生成内容摘要
-                        summary_parts = []
-                        if objects:
-                            object_names = [obj if isinstance(obj, str) else obj.get("name", "") for obj in objects[:3]]
-                            summary_parts.append(f"物体: {', '.join(object_names)}")
-                        if scenes:
-                            scene_names = [scene if isinstance(scene, str) else scene.get("name", "") for scene in scenes[:2]]
-                            summary_parts.append(f"场景: {', '.join(scene_names)}")
-                        if emotions:
-                            emotion_names = [emotion if isinstance(emotion, str) else emotion.get("name", "") for emotion in emotions[:2]]
-                            summary_parts.append(f"情绪: {', '.join(emotion_names)}")
-                        if brands:
-                            brand_names = [brand if isinstance(brand, str) else brand.get("name", "") for brand in brands[:2]]
-                            summary_parts.append(f"品牌: {', '.join(brand_names)}")
-                        
-                        summary = "; ".join(summary_parts) if summary_parts else "视频片段内容分析"
+                        # 直接使用解析后的字段，不再需要重新构造 labels 列表
+                        # analysis_result 已经包含了 object, sence, emotion, brand_elements, confidence 等字段
                         
                         segment_analysis = {
                             'file_name': segment_name,
                             'file_path': str(segment_file),
                             'file_size': segment_file.stat().st_size / (1024*1024),  # MB
-                            'model': 'Qwen2.5',
-                            'labels': labels,
-                            'summary': summary,
-                            'emotions': [str(e) for e in emotions] if emotions else [],
-                            'quality_score': 0.9  # Qwen分析默认质量分
+                            'model': 'Qwen2.5', # 或者从 analysis_result 获取（如果模型有返回）
+                            'quality_score': 0.9,  # 默认或从 analysis_result 获取
+                            # 直接合并 analysis_result 中的字段
+                            **analysis_result # 这会把 object, sence, etc. 添加进来
                         }
+                        
+                        # 移除旧的summary和emotions字段，因为新格式中已经包含
+                        # segment_analysis.pop('summary', None)
+                        # segment_analysis.pop('emotions', None)
+                        # segment_analysis.pop('labels', None) # 移除旧的labels列表
+
+                        # 确保CSV和JSON需要的字段都在
+                        # 如果QwenVideoAnalyzer返回的analysis_result键名与CSV列名完全一致（除了大小写和sence拼写）
+                        # 就不需要下面的显式赋值，**analysis_result已经处理了
+                        # 但为了明确，可以保留，或者确保QwenVideoAnalyzer返回的键名就是这些
+                        segment_analysis['object'] = analysis_result.get('object', '无')
+                        segment_analysis['sence'] = analysis_result.get('sence', '无') # 确保使用CSV的sence拼写
+                        segment_analysis['emotion'] = analysis_result.get('emotion', '无')
+                        segment_analysis['brand_elements'] = analysis_result.get('brand_elements', '无')
+                        segment_analysis['confidence'] = analysis_result.get('confidence', 0.0)
                         
                         segment_results.append(segment_analysis)
                         
@@ -2364,11 +2295,72 @@ def display_qwen_analysis_results(segment_results, video_id):
     
     st.markdown("### ✅ Qwen模型分析完成")
     
-    # 显示简单统计
-    total_segments = len(segment_results)
-    total_labels = sum(len(s['labels']) for s in segment_results)
+    # 🔍 添加调试信息
+    st.markdown("#### 🔍 调试信息")
+    with st.expander("查看原始分析数据", expanded=True):
+        st.write(f"**总结果数量**: {len(segment_results)}")
+        
+        # 显示前3个结果的详细信息
+        for i, result in enumerate(segment_results[:3]):
+            st.write(f"**结果 {i+1}:**")
+            st.json({
+                'file_name': result.get('file_name', 'N/A'),
+                'object': result.get('object', 'N/A'),
+                'sence': result.get('sence', 'N/A'), 
+                'emotion': result.get('emotion', 'N/A'),
+                'brand_elements': result.get('brand_elements', 'N/A'),
+                'confidence': result.get('confidence', 'N/A')
+            })
     
-    st.success(f"🎉 成功分析 {total_segments} 个视频片段，识别出 {total_labels} 个标签")
+    # 统计标签数量
+    total_segments = len(segment_results)
+    total_tags = 0
+    debug_info = []
+    for s in segment_results:
+        object_count = len(s.get('object', '').split(',')) if s.get('object') and s.get('object') != '无' else 0
+        sence_count = len(s.get('sence', '').split(',')) if s.get('sence') and s.get('sence') != '无' else 0
+        emotion_count = len(s.get('emotion', '').split(',')) if s.get('emotion') and s.get('emotion') != '无' else 0
+        brand_count = len(s.get('brand_elements', '').split(',')) if s.get('brand_elements') and s.get('brand_elements') != '无' else 0
+        tag_count = object_count + sence_count + emotion_count + brand_count
+        total_tags += tag_count
+        debug_info.append({
+            'file_name': s.get('file_name', ''),
+            'object': s.get('object', ''),
+            'sence': s.get('sence', ''),
+            'emotion': s.get('emotion', ''),
+            'brand_elements': s.get('brand_elements', ''),
+            'object_count': object_count,
+            'sence_count': sence_count,
+            'emotion_count': emotion_count,
+            'brand_count': brand_count,
+            'total_tags': tag_count
+        })
+    
+    st.success(f"🎉 成功分析 {total_segments} 个视频片段，识别出 {total_tags} 个标签")
+    
+    # 显示详细的标签统计调试信息
+    with st.expander("📊 标签统计详情", expanded=True):
+        total_objects = sum(d['object_count'] for d in debug_info)
+        total_sences = sum(d['sence_count'] for d in debug_info)
+        total_emotions = sum(d['emotion_count'] for d in debug_info)
+        total_brands = sum(d['brand_count'] for d in debug_info)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("物体标签", total_objects)
+        with col2:
+            st.metric("场景标签", total_sences)
+        with col3:
+            st.metric("情绪标签", total_emotions)
+        with col4:
+            st.metric("品牌标签", total_brands)
+        
+        # 显示每个片段的标签详情
+        st.markdown("**各片段标签详情:**")
+        for debug in debug_info[:5]:  # 只显示前5个
+            st.write(f"📁 {debug['file_name']}: 物体({debug['object_count']}) + 场景({debug['sence_count']}) + 情绪({debug['emotion_count']}) + 品牌({debug['brand_count']}) = {debug['total_tags']} 个标签")
+            if debug['total_tags'] == 0:
+                st.write(f"   🔍 原始数据: object='{debug['object']}', sence='{debug['sence']}', emotion='{debug['emotion']}', brand_elements='{debug['brand_elements']}'")
     
     # 自动保存JSON文件
     json_file = save_qwen_analysis_results(segment_results, video_id)
@@ -2382,57 +2374,47 @@ def display_qwen_analysis_results(segment_results, video_id):
         st.info(f"📄 **JSON详细数据**: `{json_file}`")
     if csv_file:
         st.info(f"📊 **CSV表格数据**: `{csv_file}`")
-    
-    # 快速访问按钮
-    if st.button("📂 打开保存文件夹", key="open_results_folder_simple"):
-        import subprocess
-        from pathlib import Path
-        try:
-            root_dir = Path(__file__).parent.parent.parent
-            results_dir = root_dir / "data" / "output" / "google_video" / str(video_id)
-            subprocess.run(["open", str(results_dir)], check=False)
-            st.success("✅ 已打开文件夹")
-        except Exception as e:
-            st.error(f"❌ 打开文件夹失败: {e}")
+    # 移除"📂 打开保存文件夹"按钮
 
 def export_qwen_results_to_csv(segment_results, video_id):
-    """导出Qwen分析结果为CSV文件 - 返回文件路径"""
+    """导出Qwen分析结果为CSV文件 - 返回文件路径，适配新的demo.csv格式"""
     try:
         import pandas as pd
         from datetime import datetime
         from pathlib import Path
         
-        # 准备CSV数据
         csv_data = []
-        for result in segment_results:
-            # 为每个标签创建一行
-            for label in result['labels']:
-                csv_data.append({
-                    'video_id': video_id,
-                    'segment_file': result['file_name'],
-                    'file_size_mb': result['file_size'],
-                    'label_name': label['name'],
-                    'label_type': label.get('type', '未知'),
-                    'confidence': label['confidence'],
-                    'model': result['model'],
-                    'quality_score': result.get('quality_score', 0.9),
-                    'summary': result.get('summary', ''),
-                    'analysis_time': datetime.now().isoformat()
-                })
+        for result in segment_results: # segment_results现在直接包含解析后的字段
+            # 每个result代表一行CSV
+            csv_data.append({
+                'video_id': video_id,
+                'segment_file': result.get('file_name', 'N/A'),
+                'file_size_mb': result.get('file_size', 0.0),
+                'object': result.get('object', '无'), # 直接从解析结果获取
+                'sence': result.get('sence', '无'),   # 直接从解析结果获取 (注意拼写)
+                'emotion': result.get('emotion', '无'), # 直接从解析结果获取
+                'brand_elements': result.get('brand_elements', '无'), # 直接从解析结果获取
+                'confidence': result.get('confidence', 0.0),
+                'model': result.get('model', 'Qwen2.5'), # model可能已在segment_result中
+                'quality_score': result.get('quality_score', 0.9), # quality_score可能已在segment_result中
+                'analysis_time': datetime.now().isoformat()
+            })
         
         if csv_data:
             df = pd.DataFrame(csv_data)
+            # 确保列顺序与 demo.csv 一致
+            column_order = ['video_id', 'segment_file', 'file_size_mb', 'object', 'sence', 'emotion', 'brand_elements', 'confidence', 'model', 'quality_score', 'analysis_time']
+            df = df[column_order]
             
-            # 保存到CSV
             root_dir = Path(__file__).parent.parent.parent
             results_dir = root_dir / "data" / "results"
             results_dir.mkdir(parents=True, exist_ok=True)
             
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            csv_file = results_dir / f"qwen_analysis_{video_id}_{timestamp}.csv"
+            # 使用与demo.csv一致的文件名，或者保持原有命名规则
+            csv_file = results_dir / f"qwen_analysis_export_{video_id}_{timestamp}.csv"
             
-            df.to_csv(csv_file, index=False, encoding='utf-8-sig')  # utf-8-sig for Excel compatibility
-            
+            df.to_csv(csv_file, index=False, encoding='utf-8-sig')
             return str(csv_file)
         
         return None
@@ -2442,27 +2424,28 @@ def export_qwen_results_to_csv(segment_results, video_id):
         return None
 
 def save_qwen_analysis_results(segment_results, video_id):
-    """保存Qwen分析结果到JSON文件 - 返回文件路径"""
+    """保存Qwen分析结果到JSON文件 - 返回文件路径，适配新格式"""
     try:
         import json
         from pathlib import Path
         from datetime import datetime
         
-        # 创建保存目录
         root_dir = Path(__file__).parent.parent.parent
         results_dir = root_dir / "data" / "output" / "google_video" / str(video_id)
         results_dir.mkdir(parents=True, exist_ok=True)
         
-        # 准备结果数据
+        # segment_results中的每个元素现在应该直接包含解析后的字段
+        # 例如: object, sence, emotion, brand_elements, confidence
+        # 以及 file_name, file_path, file_size, model, quality_score 等元数据
+        # JSON结构可以保持与之前类似，但segments列表中的每个字典会包含新的字段
         analysis_data = {
             'video_id': video_id,
             'analysis_time': datetime.now().isoformat(),
-            'model': 'Qwen',
+            'model': 'Qwen', # 或者从第一个result动态获取
             'total_segments': len(segment_results),
-            'segments': segment_results
+            'segments': segment_results # segment_results 现在是已转换格式的列表
         }
         
-        # 保存到文件
         result_file = results_dir / f"qwen_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         
         with open(result_file, 'w', encoding='utf-8') as f:
@@ -2934,7 +2917,7 @@ def auto_generate_clustered_scene_videos(clustered_scenes, video_id, segment_fil
             st.error(f"❌ 文件替换过程中出错: {str(e)}")
             st.warning("⚠️ 聚类视频已生成，但文件替换失败。请手动处理。")
             st.info(f"📁 聚类文件位置: {temp_output_dir}")
-    
+            
     except Exception as e:
         st.error(f"❌ 生成聚合场景视频时出错: {str(e)}")
         import traceback

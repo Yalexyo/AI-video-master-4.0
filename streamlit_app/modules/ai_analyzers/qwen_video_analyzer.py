@@ -135,98 +135,109 @@ class QwenVideoAnalyzer:
             }
     
     def _build_analysis_prompt(self, tag_language: str) -> str:
-        """构建分析提示词"""
-        return """视频内容分析，提取以下四类标签：
+        """构建分析提示词，以符合新的CSV格式要求"""
+        # 提示词要求模型输出与 demo.csv 格式一致的字段
+        # object, sence, emotion, brand_elements 为逗号分隔的标签列表
+        # confidence 为单个浮点数值
+        return """请分析视频内容，并按以下格式输出结果：
+object: [物体标签列表，以英文逗号分隔]
+sence: [场景标签列表，以英文逗号分隔]
+emotion: [情绪标签列表，以英文逗号分隔]
+brand_elements: [品牌元素列表，例如：奶粉罐,奶瓶,小瓶水奶,成分表,配料表,奶粉罐成分表。以英文逗号分隔]
+confidence: [单一置信度评分，0.0到1.0之间]
 
-物体：人物、婴幼儿用品、日常物品
-场景：室内外环境
-情绪：人物表情状态
-品牌：奶粉罐、奶瓶、奶粉成分标签等婴幼儿品牌产品
-
-输出格式（用"|"分隔）：
-物体：标签1|标签2|标签3
-场景：标签1|标签2
-情绪：标签1|标签2
-品牌：标签1|标签2
-
-无法确定时输出"无"。"""
+如果某个类别没有识别到内容，请在该类别后留空或填写 "无"。
+例如：
+object: 婴儿,玩具,小汽车
+sence: 卧室,室内
+emotion: 开心
+brand_elements: 奶粉罐,品牌Logo
+confidence: 0.85
+"""
     
     def _parse_analysis_result(
         self, 
         analysis_text, 
         tag_language: str
     ) -> Dict[str, Any]:
-        """解析分析结果"""
+        """解析分析结果，以提取 object, sence, emotion, brand_elements 和 confidence"""
         analysis_result = {
-            'objects': [],
-            'scenes': [],
-            'people': [],
-            'emotions': [],
-            'brands': [],  # 新增品牌标签
-            'all_tags': []
+            'object': '',      # 存储逗号分隔的字符串
+            'sence': '',       # 存储逗号分隔的字符串
+            'emotion': '',     # 存储逗号分隔的字符串
+            'brand_elements': '', # 存储逗号分隔的字符串
+            'confidence': 0.8, # 默认置信度，如果解析失败
+            'all_tags': []      # 保留字段，但主要数据结构改变
         }
         
         try:
-            # 确保analysis_text是字符串类型
+            # 🔍 添加调试日志：记录原始API响应
+            logger.info(f"🔍 千问API原始响应内容:\n{analysis_text}")
+            logger.info(f"🔍 响应类型: {type(analysis_text)}")
+            
+            # 🛠️ 修复：正确处理列表响应格式
             if isinstance(analysis_text, list):
-                # 如果是列表，尝试连接为字符串
-                analysis_text = '\n'.join(str(item) for item in analysis_text)
-                logger.warning("分析结果是列表类型，已转换为字符串")
+                # 如果是列表，提取第一个元素的'text'字段
+                if len(analysis_text) > 0 and isinstance(analysis_text[0], dict):
+                    analysis_text = analysis_text[0].get('text', '')
+                    logger.info(f"🔍 从列表中提取的text内容:\n{analysis_text}")
+                else:
+                    # 如果列表中不是字典，将列表元素连接
+                    analysis_text = '\n'.join(str(item) for item in analysis_text)
             elif not isinstance(analysis_text, str):
-                # 如果不是字符串也不是列表，转换为字符串
                 analysis_text = str(analysis_text)
-                logger.warning(f"分析结果类型异常({type(analysis_text)})，已转换为字符串")
             
-            lines = analysis_text.split('\n')
-            for line in lines:
+            logger.info(f"🔍 最终处理后的文本内容:\n{analysis_text}")
+
+            lines = analysis_text.strip().split('\n')
+            parsed_data = {}
+            logger.info(f"🔍 分割后的行数: {len(lines)}")
+            
+            for i, line in enumerate(lines):
                 line = line.strip()
-                if ':' in line or '：' in line:
-                    # 支持中英文冒号
-                    separator = '：' if '：' in line else ':'
-                    parts = line.split(separator, 1)
-                    if len(parts) == 2:
-                        category = parts[0].strip().lower()
-                        tags_str = parts[1].strip()
-                        
-                        if tags_str and tags_str != '-' and tags_str != 'none':
-                            # 用|分隔标签
-                            tags = [tag.strip() for tag in tags_str.split('|') if tag.strip()]
-                            
-                            # 分类存储标签
-                            if 'object' in category or '物体' in category:
-                                analysis_result['objects'].extend(tags)
-                            elif 'scene' in category or '场景' in category:
-                                analysis_result['scenes'].extend(tags)
-                            elif 'people' in category or '人物' in category:
-                                analysis_result['people'].extend(tags)
-                            elif 'emotion' in category or '情绪' in category or 'expression' in category or '表情' in category:
-                                analysis_result['emotions'].extend(tags)
-                            elif 'brand' in category or '品牌' in category:
-                                analysis_result['brands'].extend(tags)
-                            else:
-                                # 如果无法归类，根据内容推测分类
-                                for tag in tags:
-                                    if any(keyword in tag for keyword in ['宝宝', '婴儿', '妈妈', '爸爸', '儿童', '成人', '老人', '男性', '女性']):
-                                        analysis_result['people'].append(tag)
-                                    elif any(keyword in tag for keyword in ['开心', '微笑', '哭泣', '难过', '生气', '惊讶', '平静', '专注']):
-                                        analysis_result['emotions'].append(tag)
-                                    elif any(keyword in tag for keyword in ['客厅', '厨房', '卧室', '公园', '室内', '室外']):
-                                        analysis_result['scenes'].append(tag)
-                                    elif any(keyword in tag for keyword in ['奶粉罐', '奶瓶', '奶粉', '成分标签', '营养标签', '配料表', '品牌标识', '商标']):
-                                        analysis_result['brands'].append(tag)
-                                    else:
-                                        analysis_result['objects'].append(tag)
+                logger.info(f"🔍 第{i+1}行: '{line}'")
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    parsed_key = key.strip().lower()
+                    parsed_value = value.strip()
+                    parsed_data[parsed_key] = parsed_value
+                    logger.info(f"🔍 解析键值对: '{parsed_key}' = '{parsed_value}'")
             
-            # 合并所有标签
-            all_tags = (analysis_result['objects'] + 
-                      analysis_result['scenes'] + 
-                      analysis_result['people'] + 
-                      analysis_result['emotions'] + 
-                      analysis_result['brands'])
-            analysis_result['all_tags'] = list(set(all_tags))  # 去重
+            logger.info(f"🔍 最终解析数据: {parsed_data}")
+            
+            analysis_result['object'] = parsed_data.get('object', '无')
+            analysis_result['sence'] = parsed_data.get('sence', parsed_data.get('scene', '无')) # 支持两种拼写
+            analysis_result['emotion'] = parsed_data.get('emotion', '无')
+            analysis_result['brand_elements'] = parsed_data.get('brand_elements', '无')
+            
+            logger.info(f"🔍 赋值后的结果:")
+            logger.info(f"   object: '{analysis_result['object']}'")
+            logger.info(f"   sence: '{analysis_result['sence']}'")
+            logger.info(f"   emotion: '{analysis_result['emotion']}'")
+            logger.info(f"   brand_elements: '{analysis_result['brand_elements']}'")
+            
+            try:
+                confidence_str = parsed_data.get('confidence', '0.8')
+                analysis_result['confidence'] = float(confidence_str if confidence_str and confidence_str.lower() != '无' else '0.8')
+            except ValueError:
+                analysis_result['confidence'] = 0.8 # 如果转换失败，使用默认值
+
+            # 更新 all_tags (可选，根据新格式调整)
+            temp_tags = []
+            for key in ['object', 'sence', 'emotion', 'brand_elements']:
+                tags_str = analysis_result[key]
+                if tags_str and tags_str.lower() != '无':
+                    temp_tags.extend([tag.strip() for tag in tags_str.split(',')])
+            analysis_result['all_tags'] = list(set(filter(None, temp_tags))) # 去重并移除空字符串
             
         except Exception as e:
-            logger.error(f"解析千问2.5分析结果失败: {str(e)}")
+            logger.error(f"解析千问2.5新格式分析结果失败: {str(e)}\n原始文本:\n{analysis_text}")
+            # 保留默认值或空值
+            analysis_result['object'] = '解析失败'
+            analysis_result['sence'] = '解析失败'
+            analysis_result['emotion'] = '解析失败'
+            analysis_result['brand_elements'] = '解析失败'
+            analysis_result['confidence'] = 0.0
             
         return analysis_result
     
@@ -328,18 +339,29 @@ class QwenVideoAnalyzer:
         
         for result in analysis_results:
             if result.get("success"):
-                all_objects.extend(result.get('objects', []))
-                all_scenes.extend(result.get('scenes', []))
-                all_people.extend(result.get('people', []))
-                all_emotions.extend(result.get('emotions', []))
-                all_brands.extend(result.get('brands', []))
+                # 根据新的数据结构调整这里的标签提取逻辑
+                # 例如，如果 'object' 是逗号分隔的字符串:
+                object_tags = result.get('object', '')
+                if object_tags and object_tags.lower() != '无':
+                    all_objects.extend([tag.strip() for tag in object_tags.split(',')])
+                
+                scene_tags = result.get('sence', '') # 注意拼写 'sence'
+                if scene_tags and scene_tags.lower() != '无':
+                    all_scenes.extend([tag.strip() for tag in scene_tags.split(',')])
+
+                emotion_tags = result.get('emotion', '')
+                if emotion_tags and emotion_tags.lower() != '无':
+                    all_emotions.extend([tag.strip() for tag in emotion_tags.split(',')])
+
+                brand_tags = result.get('brand_elements', '')
+                if brand_tags and brand_tags.lower() != '无':
+                    all_brands.extend([tag.strip() for tag in brand_tags.split(',')])
         
         return {
-            'objects': Counter(all_objects).most_common(top_n),
-            'scenes': Counter(all_scenes).most_common(top_n),
-            'people': Counter(all_people).most_common(top_n),
-            'emotions': Counter(all_emotions).most_common(top_n),
-            'brands': Counter(all_brands).most_common(top_n)
+            'object': Counter(all_objects).most_common(top_n),
+            'sence': Counter(all_scenes).most_common(top_n), # 确保键名一致
+            'emotion': Counter(all_emotions).most_common(top_n),
+            'brand_elements': Counter(all_brands).most_common(top_n)
         }
     
     def _analyze_video_file(
