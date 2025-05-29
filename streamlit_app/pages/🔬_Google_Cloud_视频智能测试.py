@@ -1806,7 +1806,7 @@ def analyze_existing_segments():
                     "分析片段数量",
                     min_value=1,
                     max_value=min(len(segment_files), 50),
-                    value=min(len(segment_files), 10),
+                    value=min(len(segment_files), 50),
                     help="为了节省时间和资源，可以限制分析的片段数量"
                 )
             
