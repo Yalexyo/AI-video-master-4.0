@@ -586,6 +586,12 @@ def test_video_intelligence(use_deepseek_translation=False):
                 
             with col2:
                 object_tracking = st.checkbox("物体跟踪", help="跟踪视频中移动的对象")
+                # 添加自动清理选项
+                auto_cleanup = st.checkbox(
+                    "分析完成后删除云端视频", 
+                    value=True, 
+                    help="自动删除上传到Cloud Storage的临时视频文件，节省存储成本"
+                )
             
             # 开始分析按钮
             if st.button("🚀 开始分析", type="primary"):
@@ -620,7 +626,8 @@ def test_video_intelligence(use_deepseek_translation=False):
                         analysis_result = analyzer.analyze_video(
                             video_uri=video_uri,
                             features=features,
-                            progress_callback=progress_callback
+                            progress_callback=progress_callback,
+                            auto_cleanup_storage=False  # 示例视频不需要清理
                         )
                         
                         current_video_path = None  # 示例视频无法直接切分
@@ -645,11 +652,20 @@ def test_video_intelligence(use_deepseek_translation=False):
                         analysis_result = analyzer.analyze_video(
                             video_path=current_video_path,
                             features=features,
-                            progress_callback=progress_callback
+                            progress_callback=progress_callback,
+                            auto_cleanup_storage=auto_cleanup  # 使用用户选择的清理选项
                         )
                     
                     if analysis_result.get("success"):
                         result = analysis_result["result"]
+                        
+                        # 显示清理状态
+                        if analysis_result.get("cleanup_performed"):
+                            st.success("✅ 分析完成！云端临时视频文件已自动删除")
+                        elif auto_cleanup and not analysis_result.get("cleanup_performed"):
+                            st.info("ℹ️ 分析完成！未使用Cloud Storage（小文件直接传输）")
+                        else:
+                            st.success("✅ 分析完成！")
                         
                         # 保存到会话状态
                         st.session_state.analysis_result = result

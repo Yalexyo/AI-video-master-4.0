@@ -97,7 +97,9 @@ class GoogleVideoAnalyzer:
         video_path: Optional[str] = None,
         video_uri: Optional[str] = None,
         features: List[str] = None,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        auto_cleanup_storage: bool = False,
+        bucket_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         分析视频内容
@@ -107,6 +109,8 @@ class GoogleVideoAnalyzer:
             video_uri: 云端视频URI（如gs://bucket/video.mp4）
             features: 要分析的功能列表
             progress_callback: 进度回调函数
+            auto_cleanup_storage: 是否在分析完成后自动删除上传的文件
+            bucket_name: Cloud Storage桶名（如果不提供会使用默认的ai-video-master）
 
         Returns:
             分析结果字典
@@ -143,6 +147,9 @@ class GoogleVideoAnalyzer:
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
 
+        uploaded_blob_name = None  # 记录上传的文件名，用于后续删除
+        bucket = None
+
         try:
             from google.cloud import videointelligence_v1 as vi
 
@@ -168,7 +175,7 @@ class GoogleVideoAnalyzer:
                 file_size_mb = file_size / (1024 * 1024)
 
                 if progress_callback:
-                    progress_callback(15, f"准备上传视频文件 ({file_size_mb:.1f}MB)...")
+                    progress_callback(15, f"准备处理视频文件 ({file_size_mb:.1f}MB)...")
 
                 # 大文件警告
                 if file_size_mb > 200:
@@ -182,10 +189,41 @@ class GoogleVideoAnalyzer:
                     if progress_callback:
                         progress_callback(20, f"视频文件较小 ({file_size_mb:.1f}MB)，预计1-2分钟完成...")
 
-                # 本地文件
-                with open(video_path, "rb") as f:
-                    input_content = f.read()
-                request = {"features": api_features, "input_content": input_content}
+                # 如果需要自动清理，或者文件较大，则上传到Cloud Storage
+                if auto_cleanup_storage or file_size_mb > 50:
+                    if progress_callback:
+                        progress_callback(22, "上传视频到Cloud Storage...")
+                    
+                    # 准备Cloud Storage桶
+                    if not bucket_name:
+                        bucket_name = "ai-video-master"
+                    
+                    bucket = self._ensure_bucket_exists(bucket_name)
+                    if not bucket:
+                        raise Exception(f"无法创建或访问存储桶: {bucket_name}")
+                    
+                    # 生成唯一的云端文件名
+                    import time
+                    timestamp = int(time.time())
+                    file_name = f"single_analysis_{timestamp}_{uuid.uuid4().hex[:8]}_{Path(video_path).name}"
+                    uploaded_blob_name = f"video-analysis/{file_name}"
+                    
+                    # 上传文件到Cloud Storage
+                    gs_uri = self._upload_to_cloud_storage(bucket, video_path, uploaded_blob_name)
+                    if not gs_uri:
+                        raise Exception("上传视频到Cloud Storage失败")
+                    
+                    logger.info(f"视频已上传到Cloud Storage: {gs_uri}")
+                    request = {"features": api_features, "input_uri": gs_uri}
+                    
+                    if progress_callback:
+                        progress_callback(25, f"视频已上传到云端，开始分析...")
+                else:
+                    # 小文件直接通过内容上传
+                    with open(video_path, "rb") as f:
+                        input_content = f.read()
+                    request = {"features": api_features, "input_content": input_content}
+                    
             elif video_uri:
                 # 云端文件
                 request = {"features": api_features, "input_uri": video_uri}
@@ -194,7 +232,7 @@ class GoogleVideoAnalyzer:
 
             # 执行分析
             if progress_callback:
-                progress_callback(25, "正在提交分析请求到Google Cloud...")
+                progress_callback(30, "正在提交分析请求到Google Cloud...")
 
             # 添加重试机制
             max_retries = 3
@@ -212,7 +250,7 @@ class GoogleVideoAnalyzer:
                     if "503" in error_str or "failed to connect" in error_str:
                         if retry_count < max_retries:
                             if progress_callback:
-                                progress_callback(25, f"网络连接失败，正在重试... ({retry_count}/{max_retries})")
+                                progress_callback(30, f"网络连接失败，正在重试... ({retry_count}/{max_retries})")
                             time.sleep(5)  # 等待5秒后重试
                             continue
                         else:
@@ -224,7 +262,7 @@ class GoogleVideoAnalyzer:
                 raise Exception("无法提交分析请求到Google Cloud")
 
             if progress_callback:
-                progress_callback(30, f"分析请求已提交，操作ID: {operation.operation.name}")
+                progress_callback(35, f"分析请求已提交，操作ID: {operation.operation.name}")
 
             # 等待完成
             start_time = time.time()
@@ -232,7 +270,7 @@ class GoogleVideoAnalyzer:
             check_interval = 10  # 每10秒检查一次
 
             if progress_callback:
-                progress_callback(35, "分析任务已提交到Google Cloud，正在处理...")
+                progress_callback(40, "分析任务已提交到Google Cloud，正在处理...")
 
             while not operation.done():
                 elapsed = time.time() - start_time
@@ -244,7 +282,7 @@ class GoogleVideoAnalyzer:
                 if progress_callback:
                     # 非线性进度计算，前期慢后期快
                     progress_ratio = min(elapsed / timeout, 0.8)
-                    progress = 35 + int(progress_ratio * 55)  # 35-90%
+                    progress = 40 + int(progress_ratio * 50)  # 40-90%
 
                     # 估算剩余时间
                     if elapsed > 30:  # 30秒后开始估算
@@ -262,6 +300,22 @@ class GoogleVideoAnalyzer:
             result = operation.result()
 
             if progress_callback:
+                progress_callback(95, "分析完成，正在处理结果...")
+
+            # 分析完成后清理Cloud Storage文件（如果需要）
+            if auto_cleanup_storage and uploaded_blob_name and bucket:
+                try:
+                    if progress_callback:
+                        progress_callback(97, "清理临时云端文件...")
+                    
+                    blob = bucket.blob(uploaded_blob_name)
+                    blob.delete()
+                    logger.info(f"已删除Cloud Storage文件: {uploaded_blob_name}")
+                    
+                except Exception as e:
+                    logger.warning(f"删除Cloud Storage文件失败 {uploaded_blob_name}: {str(e)}")
+
+            if progress_callback:
                 progress_callback(100, "分析完成！")
 
             return {
@@ -269,11 +323,22 @@ class GoogleVideoAnalyzer:
                 "result": result,
                 "features": features,
                 "video_path": video_path,
-                "video_uri": video_uri
+                "video_uri": video_uri,
+                "cleanup_performed": auto_cleanup_storage and uploaded_blob_name is not None
             }
 
         except Exception as e:
             logger.error(f"Google Cloud视频分析失败: {str(e)}")
+            
+            # 出错时也尝试清理上传的文件
+            if auto_cleanup_storage and uploaded_blob_name and bucket:
+                try:
+                    blob = bucket.blob(uploaded_blob_name)
+                    blob.delete()
+                    logger.info(f"分析失败，已清理Cloud Storage文件: {uploaded_blob_name}")
+                except Exception as cleanup_e:
+                    logger.warning(f"清理失败的上传文件时出错: {str(cleanup_e)}")
+            
             return {
                 "success": False,
                 "error": str(e),
