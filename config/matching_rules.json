@@ -1,0 +1,414 @@
+{
+  "痛点": {
+    "description": "用户遇到的问题、困难、焦虑等负面场景。",
+    "object_keywords": [
+      "宝宝",
+      "婴儿",
+      "小孩"
+    ],
+    "sence_keywords": [
+      "医院",
+      "病房",
+      "喂养"
+    ],
+    "emotion_keywords": [
+      "焦虑",
+      "担心",
+      "哭闹",
+      "不安",
+      "痛苦",
+      "悲伤",
+      "烦躁"
+    ],
+    "required_keywords": [
+      "宝宝",
+      "小孩"
+    ],
+    "negative_keywords": [
+      "车",
+      "开车",
+      "驾驶",
+      "方向盘",
+      "马路",
+      "高速",
+      "办公室",
+      "会议",
+      "商务",
+      "路牌"
+    ],
+    "min_quality": 0.6,
+    "min_score_threshold": 0.3,
+    "weights": {
+      "object": 0.3,
+      "sence": 0.3,
+      "emotion": 0.4,
+      "required": 1.0,
+      "brand": 0.0
+    }
+  },
+  "解决方案导入": {
+    "description": "引出产品或服务作为解决方案的场景，侧重于母亲、专家的推荐或经验分享。",
+    "object_keywords": [
+      "妈妈",
+      "母亲",
+      "专家",
+      "医生",
+      "奶粉罐"
+    ],
+    "sence_keywords": [
+      "客厅",
+      "厨房",
+      "咨询",
+      "讲解",
+      "推荐"
+    ],
+    "emotion_keywords": [
+      "关爱",
+      "温馨",
+      "信任",
+      "专业"
+    ],
+    "required_keywords": [
+      "妈妈"
+    ],
+    "negative_keywords": [
+      "哭",
+      "哭闹",
+      "病",
+      "生病",
+      "医院",
+      "打点滴",
+      "交通工具",
+      "驾驶",
+      "路牌"
+    ],
+    "min_quality": 0.65,
+    "min_score_threshold": 0.4,
+    "weights": {
+      "object": 0.4,
+      "sence": 0.3,
+      "emotion": 0.2,
+      "required": 1.0,
+      "brand": 0.1
+    }
+  },
+  "卖点·成分&配方": {
+    "description": "突出产品核心卖点、成分、配方、技术优势等。",
+    "object_keywords": [
+      "奶粉",
+      "奶粉罐",
+      "成分",
+      "配方",
+      "营养表"
+    ],
+    "sence_keywords": [
+      "产品展示",
+      "实验室",
+      "科研",
+      "特写"
+    ],
+    "emotion_keywords": [
+      "信赖",
+      "专业",
+      "科技感",
+      "健康"
+    ],
+    "required_keywords": [
+      "奶粉"
+    ],
+    "negative_keywords": [
+      "哭",
+      "哭闹",
+      "医院",
+      "病房",
+      "打点滴",
+      "负面情绪",
+      "车",
+      "驾驶"
+    ],
+    "min_quality": 0.7,
+    "min_score_threshold": 0.5,
+    "weights": {
+      "object": 0.5,
+      "sence": 0.3,
+      "emotion": 0.1,
+      "required": 1.0,
+      "brand": 0.1
+    }
+  },
+  "促销机制": {
+    "description": "涉及产品促销、购买链接、优惠活动等，特别包含体现宝宝健康活力成长快乐的正面展示内容。",
+    "object_keywords": [
+      "手机",
+      "二维码",
+      "购物袋",
+      "活泼宝宝",
+      "开心宝宝",
+      "健康宝宝",
+      "我家宝宝",
+      "我家娃",
+      "小朋友"
+    ],
+    "sence_keywords": [
+      "购买页面",
+      "扫码",
+      "活动海报",
+      "购物车",
+      "户外玩耍",
+      "公园",
+      "游乐场",
+      "亲子互动",
+      "快乐成长",
+      "健康成长",
+      "活力满满",
+      "精神饱满"
+    ],
+    "emotion_keywords": [
+      "优惠",
+      "限时",
+      "划算",
+      "推荐",
+      "开心",
+      "快乐",
+      "活泼",
+      "健康",
+      "聪明",
+      "机灵",
+      "可爱",
+      "精神",
+      "有活力",
+      "爱笑",
+      "爱玩",
+      "好奇心强"
+    ],
+    "required_keywords": [],
+    "negative_keywords": [
+      "哭",
+      "哭闹",
+      "医院",
+      "病",
+      "驾驶",
+      "车"
+    ],
+    "min_quality": 0.5,
+    "min_score_threshold": 0.3,
+    "weights": {
+      "object": 0.4,
+      "sence": 0.4,
+      "emotion": 0.2,
+      "required": 1.0,
+      "brand": 0.0
+    }
+  },
+  "GLOBAL_SETTINGS": {
+    "global_exclusion_keywords": [
+      "疑似"
+    ],
+    "max_segments_per_module": 3,
+    "irrelevant_scene_categories": {
+      "driving_related": [
+        "开车",
+        "驾驶",
+        "车内",
+        "方向盘",
+        "仪表盘",
+        "导航",
+        "高速",
+        "马路",
+        "道路",
+        "车窗",
+        "后视镜",
+        "车载",
+        "交通",
+        "红绿灯",
+        "停车",
+        "汽车",
+        "车辆",
+        "司机",
+        "驾驶员",
+        "油门",
+        "刹车",
+        "换挡",
+        "车门",
+        "安全带",
+        "car",
+        "cars",
+        "driver",
+        "driving",
+        "steering wheel",
+        "dashboard",
+        "vehicle",
+        "road",
+        "highway"
+      ],
+      "outdoor_unrelated": [
+        "登山",
+        "爬山",
+        "徒步",
+        "野营",
+        "钓鱼",
+        "游泳",
+        "跑步",
+        "健身房",
+        "运动场",
+        "篮球",
+        "足球",
+        "网球",
+        "高尔夫",
+        "滑雪",
+        "海滩",
+        "沙滩"
+      ],
+      "office_business": [
+        "办公室",
+        "会议室",
+        "商务",
+        "西装",
+        "领带",
+        "文件",
+        "电脑",
+        "键盘",
+        "打字",
+        "会议",
+        "演讲",
+        "PPT",
+        "商业",
+        "公司",
+        "企业"
+      ],
+      "restaurant_dining": [
+        "餐厅",
+        "饭店",
+        "酒店",
+        "服务员",
+        "菜单",
+        "点菜",
+        "用餐",
+        "聚餐",
+        "宴会",
+        "酒杯",
+        "红酒",
+        "啤酒",
+        "烧烤",
+        "火锅"
+      ],
+      "medical_negative_general": [
+        "医院",
+        "病房",
+        "打点滴",
+        "输液",
+        "针",
+        "针头",
+        "挂水",
+        "病床",
+        "iv",
+        "drip",
+        "infusion",
+        "injection",
+        "syringe",
+        "hospital",
+        "patient"
+      ]
+    },
+    "maternal_infant_keywords_positive": [
+      "宝宝",
+      "婴儿",
+      "妈妈",
+      "母亲",
+      "父亲",
+      "爸爸",
+      "孩子",
+      "小朋友",
+      "新生儿",
+      "准妈妈",
+      "孕妇",
+      "产妇",
+      "家长",
+      "父母",
+      "奶奶",
+      "爷爷",
+      "外婆",
+      "外公",
+      "奶粉",
+      "配方奶",
+      "母乳",
+      "奶瓶",
+      "尿布",
+      "纸尿裤",
+      "婴儿用品",
+      "奶嘴",
+      "奶罐",
+      "奶粉罐",
+      "营养品",
+      "辅食",
+      "米粉",
+      "果泥",
+      "喂奶",
+      "冲奶",
+      "哺乳",
+      "换尿布",
+      "洗澡",
+      "睡觉",
+      "哄睡",
+      "抱抱",
+      "家里",
+      "客厅",
+      "卧室",
+      "婴儿房",
+      "厨房",
+      "餐桌",
+      "沙发",
+      "床",
+      "摇篮",
+      "启赋",
+      "illuma",
+      "wyeth",
+      "a2",
+      "hmo",
+      "dha",
+      "惠氏",
+      "美赞臣",
+      "雅培",
+      "温馨",
+      "关爱",
+      "呵护",
+      "健康",
+      "成长",
+      "发育",
+      "营养",
+      "安全",
+      "放心"
+    ],
+    "content_relevance_thresholds": {
+      "min_maternal_keywords_ratio": 0.08,
+      "max_irrelevant_keywords_allowed": 0
+    }
+  },
+  "sellpoint": {
+    "object_keywords": [],
+    "sence_keywords": [],
+    "emotion_keywords": [],
+    "required_keywords": [],
+    "negative_keywords": []
+  },
+  "solution_intro": {
+    "object_keywords": [],
+    "sence_keywords": [],
+    "emotion_keywords": [],
+    "required_keywords": [],
+    "negative_keywords": [
+      "高速公路",
+      "红绿灯"
+    ]
+  },
+  "pain_point": {
+    "object_keywords": [],
+    "sence_keywords": [],
+    "emotion_keywords": [],
+    "required_keywords": [],
+    "negative_keywords": [
+      "高速公路",
+      "红绿灯"
+    ]
+  }
+}
