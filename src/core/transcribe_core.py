@@ -100,69 +100,19 @@ def correct_professional_terms(text):
     
     return corrected_text
 
-def apply_corrections_to_json(json_data, output_file=None):
-    """
-    ⚠️ 已弃用：此函数已迁移到 DashScopeAudioAnalyzer.apply_corrections_to_json()
-    建议使用：DashScopeAudioAnalyzer.apply_corrections_to_json(json_data, use_regex_rules=True)
-    
-    应用专业词汇校正到JSON数据
-    """
-    logger.warning("apply_corrections_to_json() 已弃用，建议使用 DashScopeAudioAnalyzer.apply_corrections_to_json()")
-    
-    # 为了向后兼容，尝试使用新分析器
-    try:
-        from streamlit_app.modules.ai_analyzers import DashScopeAudioAnalyzer
-        analyzer = DashScopeAudioAnalyzer()
-        return analyzer.apply_corrections_to_json(json_data, output_file, use_regex_rules=True)
-    except Exception as e:
-        logger.warning(f"无法使用新分析器，回退到原有实现: {str(e)}")
-        
-        # 回退到原有实现
-    if isinstance(json_data, str):
-        try:
-            with open(json_data, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except:
-            logger.error(f"无法加载JSON文件: {json_data}")
-            return None, False
-    else:
-        data = json_data
-    
-    # 应用专业词汇校正
-    corrected = False
-    if "transcripts" in data:
-        for transcript in data["transcripts"]:
-            # 校正整体文本
-            if "text" in transcript:
-                original_text = transcript["text"]
-                transcript["text"] = correct_professional_terms(original_text)
-                if original_text != transcript["text"]:
-                    corrected = True
-            
-            # 校正每个句子
-            if "sentences" in transcript:
-                for sentence in transcript["sentences"]:
-                    if "text" in sentence:
-                        original_text = sentence["text"]
-                        sentence["text"] = correct_professional_terms(original_text)
-                        if original_text != sentence["text"]:
-                            corrected = True
-    
-        # 检查是否有单独的sentences字段
-    if "sentences" in data:
-        for sentence in data["sentences"]:
-            if "text" in sentence:
-                original_text = sentence["text"]
-                sentence["text"] = correct_professional_terms(original_text)
-                if original_text != sentence["text"]:
-                    corrected = True
-    
-    # 如果需要输出到文件
-    if output_file:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    
-    return data, corrected
+# ⚠️ 已弃用：此函数已迁移到 DashScopeAudioAnalyzer.apply_corrections_to_json()
+# 建议使用：DashScopeAudioAnalyzer.apply_corrections_to_json(json_data, use_regex_rules=True)
+# 
+# 此函数保留仅用于向后兼容，新代码请使用 DashScopeAudioAnalyzer
+# def apply_corrections_to_json(json_data, output_file=None):
+#     """应用专业词汇校正到转录JSON"""
+#     logger.warning("apply_corrections_to_json() 已弃用，建议使用 DashScopeAudioAnalyzer.apply_corrections_to_json()")
+#     
+#     # 使用新的DashScopeAudioAnalyzer
+#     from streamlit_app.modules.ai_analyzers.dashscope_audio_analyzer import DashScopeAudioAnalyzer
+#     analyzer = DashScopeAudioAnalyzer()
+#     
+#     return analyzer.apply_corrections_to_json(json_data, output_file, use_regex_rules=True)
 
 # ==================== 仍在使用的核心函数 ====================
 
@@ -368,8 +318,12 @@ def transcribe_audio(audio_path, hotword_id=None, output_dir=None):
                         
                         # 应用专业词汇校正
                         corrected_json_output = os.path.join(output_dir, f"{base_name}_corrected_{timestamp}.json")
-                        result_json, has_corrections = apply_corrections_to_json(raw_json_output, corrected_json_output)
-                        
+
+                        # 直接使用DashScopeAudioAnalyzer避免弃用警告
+                        from streamlit_app.modules.ai_analyzers.dashscope_audio_analyzer import DashScopeAudioAnalyzer
+                        analyzer = DashScopeAudioAnalyzer()
+                        result_json, has_corrections = analyzer.apply_corrections_to_json(raw_json_output, corrected_json_output, use_regex_rules=True)
+
                         if has_corrections:
                             logger.info(f"已进行专业词汇校正，结果保存到: {corrected_json_output}")
                         else:
@@ -529,7 +483,9 @@ def transcribe_audio_with_timestamp(audio_path, output_json=None, hotword_id=Non
                 data = json.load(f)
             
             # 应用专业词汇校正
-            corrected_data, _ = apply_corrections_to_json(data)
+            from streamlit_app.modules.ai_analyzers.dashscope_audio_analyzer import DashScopeAudioAnalyzer
+            analyzer = DashScopeAudioAnalyzer()
+            corrected_data, _ = analyzer.apply_corrections_to_json(data, use_regex_rules=True)
             
             # 如果output_json与result_path不同，保存校正后的结果
             if output_json != result_path:

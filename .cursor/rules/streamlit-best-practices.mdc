@@ -9,7 +9,7 @@ alwaysApply: true
 
 ```
 project_name/
-├── app.py              # 主入口文件
+├── 主页.py              # 主入口文件
 ├── config/             # 配置文件目录
 │   ├── __init__.py
 │   └── config.py       # 配置参数

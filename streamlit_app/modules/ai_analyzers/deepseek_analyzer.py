@@ -91,37 +91,38 @@ class DeepSeekAnalyzer:
     
     def analyze_video_summary(self, transcript: str) -> Dict[str, Any]:
         """
-        分析视频转录文本，提取目标人群和产品信息
+        分析视频转录内容，提取目标人群信息
         
         Args:
             transcript: 视频转录文本
             
         Returns:
-            分析结果字典
+            分析结果字典，包含目标人群信息
         """
         if not self.is_available():
+            logger.warning("DeepSeek API不可用")
             return {"error": "DeepSeek API不可用"}
         
         if not transcript.strip():
             return {"error": "转录文本为空"}
         
         try:
-            # 从config中导入目标人群列表
-            from streamlit_app.config.config import TARGET_GROUPS
-            target_groups_str = json.dumps(TARGET_GROUPS, ensure_ascii=False)
-            
-            system_prompt = f"""你是一个专业的视频内容分析师，擅长分析母婴奶粉营销视频的内容特征。
+            # 构建分析提示词
+            system_prompt = """你是专业的母婴产品营销分析师。
+请分析视频转录文本，识别目标用户群体。
 
-预定义的目标人群列表：
-{target_groups_str}
+重点关注：
+1. 语言风格和内容特点
+2. 关注的问题和需求
+3. 产品使用场景
+4. 决策考虑因素
 
-请根据视频转录文本，分析并返回最匹配的目标人群。
-
-要求：
-- 基于内容特征（如提到的年龄段、需求、场景等）进行判断
-- 只能返回一个目标人群，不能返回多个
-- 必须是预定义列表中的人群名称
-- 基于内容特征做出最佳判断
+常见目标人群类型：
+- 孕期妈妈：关注安全性、营养价值、专业认证
+- 新手爸妈：需要指导、教育、专业支持
+- 二胎妈妈：重视便利性、性价比、经验分享
+- 职场妈妈：注重效率、品质、时间管理
+- 年轻父母：关注潮流、社交、个性化
 
 请以JSON格式输出分析结果，确保target_audience字段是单个字符串值。"""
 
@@ -167,110 +168,6 @@ class DeepSeekAnalyzer:
         except Exception as e:
             logger.error(f"视频内容分析失败: {str(e)}")
             return {"error": str(e)}
-    
-    def analyze_semantic_segments(self, transcript_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        分析转录片段的语义类型
-        
-        Args:
-            transcript_segments: 转录片段列表
-            
-        Returns:
-            带有语义分析的片段列表
-        """
-        if not self.is_available():
-            logger.warning("DeepSeek API不可用，跳过语义分析")
-            return transcript_segments
-        
-        analyzed_segments = []
-        
-        for segment in transcript_segments:
-            try:
-                segment_text = segment.get('text', '')
-                if not segment_text.strip():
-                    analyzed_segments.append(segment)
-                    continue
-                
-                # 分析语义类型
-                semantic_result = self._analyze_segment_semantic(segment_text)
-                
-                # 合并结果
-                enhanced_segment = segment.copy()
-                enhanced_segment.update(semantic_result)
-                analyzed_segments.append(enhanced_segment)
-                
-            except Exception as e:
-                logger.error(f"分析片段语义失败: {str(e)}")
-                analyzed_segments.append(segment)
-        
-        return analyzed_segments
-    
-    def _analyze_segment_semantic(self, text: str) -> Dict[str, Any]:
-        """分析单个片段的语义类型"""
-        try:
-            # 从config中导入语义类型定义
-            from streamlit_app.config.config import SEMANTIC_SEGMENT_TYPES
-            
-            type_descriptions = []
-            for i, semantic_type in enumerate(SEMANTIC_SEGMENT_TYPES.keys()):
-                description = SEMANTIC_SEGMENT_TYPES[semantic_type].get('description', '')
-                type_descriptions.append(f"{i+1}. {semantic_type}: {description}")
-            
-            system_prompt = f"""你是一个专业的视频内容分析师，擅长将母婴奶粉营销视频的文本片段归类到合适的语义类型中。
-
-可选的语义类型及其定义：
-{chr(10).join(type_descriptions)}
-
-请根据文本内容，选择最合适的语义类型。如果文本内容不明确或难以归类，请选择"其他"。
-
-返回格式要求：
-- semantic_type: 选择的语义类型名称（必须是上述类型之一）
-- confidence: 置信度（0.0-1.0之间的浮点数）
-- reasoning: 简短的分析理由
-
-请以JSON格式返回结果。"""
-
-            user_prompt = f"请分析以下文本片段的语义类型：\n\n文本内容：{text}"
-
-            response = self._chat_completion([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ])
-
-            if response and "choices" in response and response["choices"]:
-                result_text = response["choices"][0].get("message", {}).get("content", "")
-                
-                # 解析JSON响应
-                import re
-                json_match = re.search(r'```json\s*([\s\S]*?)\s*```', result_text)
-                if json_match:
-                    json_str = json_match.group(1)
-                else:
-                    json_str = result_text
-                
-                try:
-                    result = json.loads(json_str)
-                    return {
-                        "semantic_type": result.get("semantic_type", "其他"),
-                        "confidence": float(result.get("confidence", 0.5)),
-                        "reasoning": result.get("reasoning", "")
-                    }
-                except (json.JSONDecodeError, ValueError) as e:
-                    logger.error(f"解析语义分析结果失败: {e}")
-            
-            return {
-                "semantic_type": "其他",
-                "confidence": 0.5,
-                "reasoning": "分析失败，使用默认类型"
-            }
-            
-        except Exception as e:
-            logger.error(f"语义分析失败: {str(e)}")
-            return {
-                "semantic_type": "其他",
-                "confidence": 0.0,
-                "reasoning": f"分析错误: {str(e)}"
-            }
     
     def _chat_completion(self, messages: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
         """

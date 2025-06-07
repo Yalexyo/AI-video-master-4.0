@@ -1,33 +1,57 @@
-streamlit>=1.26.0
-pandas>=1.5.3
-numpy>=1.24.3
-sentence-transformers>=2.2.2
-torch==2.1.2
-scikit-learn>=1.2.2
-python-dotenv>=1.0.0
-requests==2.31.0
-pytest==7.4.3
-black==23.12.0
-flake8==6.1.0
-moviepy>=1.0.3
-nest-asyncio==1.6.0
-tqdm==4.66.1
-dashscope>=1.13.3
-jieba==0.42.1  # 中文分词库
-oss2>=2.17.0  # 阿里云OSS SDK
-opencv-python>=4.7.0  # 图像处理库
-pydub>=0.25.1  # 音频处理库
-httpx>=0.24.1  # HTTP客户端
-tenacity>=8.2.2
-gitpython>=3.1.32
-langchain>=0.0.239
-altair<5
-jinja2>=3.1.2
-pyyaml>=6.0
-typing-extensions>=4.5.0
-ffmpeg-python>=0.2.0
-watchdog>=2.1.8
-# DeepSeek V3 支持
-openai>=1.0.0
-# Google Cloud Video Intelligence API
-google-cloud-videointelligence>=3.0.0
+# 🏭 AI视频工厂系统依赖文件
+# 支持零件工厂、组装工厂和混剪工厂的所有功能
+
+# ========== 核心框架 ==========
+streamlit>=1.28.0              # 主框架
+pandas>=2.0.0                  # 数据处理
+numpy>=1.24.0                  # 数值计算
+
+# ========== AI分析器 ==========
+dashscope>=1.13.3              # 阿里云通义千问 (Qwen视觉分析)
+google-cloud-videointelligence>=3.0.0  # Google Cloud Video Intelligence
+openai>=1.0.0                  # DeepSeek V3支持
+requests>=2.31.0               # HTTP请求
+
+# ========== 视频处理 ==========
+opencv-python>=4.7.0           # 图像/视频处理 (cv2)
+torch>=2.1.0                   # AI模型推理
+moviepy>=1.0.3                 # 视频编辑 (混剪工厂)
+ffmpeg-python>=0.2.0           # 视频转码
+
+# ========== 音频处理 ==========
+pydub>=0.25.1                  # 音频处理
+
+# ========== 环境配置 ==========
+python-dotenv>=1.0.0           # 环境变量管理
+pyyaml>=6.0                    # YAML配置文件
+
+# ========== 类型提示和工具 ==========
+typing-extensions>=4.5.0       # 类型提示
+pathlib                        # 路径处理 (Python内置)
+tqdm>=4.66.1                  # 进度条
+
+# ========== 可选依赖 ==========
+# 以下依赖在某些高级功能中使用，按需安装
+
+# 高级AI功能
+# sentence-transformers>=2.2.2  # 文本嵌入 (混剪工厂高级匹配)
+scikit-learn>=1.2.2          # 机器学习工具
+
+# 云存储
+oss2>=2.17.0                 # 阿里云OSS SDK (如需云存储)
+
+# 开发工具
+pytest>=7.4.3               # 测试框架
+black>=23.12.0               # 代码格式化
+flake8>=6.1.0                # 代码检查
+
+# 高级工具
+# nest-asyncio>=1.6.0          # 异步支持
+# tenacity>=8.2.2              # 重试机制
+# watchdog>=2.1.8              # 文件监控
+# jieba>=0.42.1                # 中文分词
+# jinja2>=3.1.2                # 模板引擎
+# altair<5                     # 图表库
+# httpx>=0.24.1                # 异步HTTP客户端
+# gitpython>=3.1.32            # Git操作
+# langchain>=0.0.239           # 大语言模型工具链

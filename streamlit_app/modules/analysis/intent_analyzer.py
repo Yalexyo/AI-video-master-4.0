@@ -10,6 +10,7 @@ from typing import Dict, Any
 from streamlit_app.config.config import get_config, TARGET_GROUPS, SELLING_POINTS, PRODUCT_TYPES, BRAND_KEYWORDS, get_semantic_segment_types, get_semantic_type_definitions, DEFAULT_SEMANTIC_SEGMENT_TYPES
 from sentence_transformers import SentenceTransformer, util
 import torch
+from streamlit_app.utils.keyword_config import sync_prompt_templates
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -75,15 +76,20 @@ class SemanticAnalyzer:
             # 尝试加载模型，如果失败则跳过，不阻止程序运行
             try:
                 from sentence_transformers import SentenceTransformer
-                # 使用本地模型路径
-                local_model_path = config.get("sentence_transformer_local_path")
-                if local_model_path and os.path.exists(local_model_path):
-                    logger.info(f"使用本地模型路径: {local_model_path}")
-                    self.similarity_model = SentenceTransformer(self.similarity_model_name, cache_folder=local_model_path, device=device)
+                
+                # 🔧 优先尝试使用统一的本地模型路径
+                if self._init_similarity_model_offline():
+                    logger.info("✅ 使用离线模式加载文本相似度模型")
                 else:
-                    logger.warning(f"本地模型路径不存在: {local_model_path}，尝试从默认位置加载")
-                    self.similarity_model = SentenceTransformer(self.similarity_model_name, device=device)
-                logger.info(f"文本相似度模型 {self.similarity_model_name} 初始化完成，使用设备: {device}")
+                    # 🔧 回退：使用config中的路径
+                    local_model_path = config.get("sentence_transformer_local_path")
+                    if local_model_path and os.path.exists(local_model_path):
+                        logger.info(f"使用config中的本地模型路径: {local_model_path}")
+                        self.similarity_model = SentenceTransformer(self.similarity_model_name, cache_folder=local_model_path, device=device)
+                    else:
+                        logger.warning(f"config中的本地模型路径不存在: {local_model_path}，尝试从网络加载")
+                        self.similarity_model = SentenceTransformer(self.similarity_model_name, device=device)
+                    logger.info(f"文本相似度模型 {self.similarity_model_name} 初始化完成，使用设备: {device}")
             except Exception as e:
                 logger.error(f"初始化文本相似度模型失败: {e}")
                 logger.warning("将使用备用方法进行相似度计算")
@@ -91,6 +97,33 @@ class SemanticAnalyzer:
         except Exception as e:
             logger.error(f"初始化文本相似度模型时发生异常: {e}")
             self.similarity_model = None
+    
+    def _init_similarity_model_offline(self):
+        """离线模式下初始化相似度模型"""
+        try:
+            from pathlib import Path
+            from sentence_transformers import SentenceTransformer
+            
+            # 检查本地模型路径（使用统一路径）
+            primary_model_path = Path("models/sentence_transformers/all-MiniLM-L6-v2")
+            fallback_model_path = Path("models/sentence_transformers/paraphrase-multilingual-MiniLM-L12-v2")
+            
+            if not primary_model_path.exists():
+                logger.debug(f"主相似度模型不存在: {primary_model_path}")
+                return False
+            
+            # 尝试加载主模型
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.similarity_model = SentenceTransformer(str(primary_model_path), device=device)
+            logger.info(f"✅ 离线模式：加载相似度模型成功: {primary_model_path}")
+            return True
+            
+        except ImportError as e:
+            logger.warning(f"离线模式：sentence_transformers未安装: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 离线模式加载相似度模型失败: {e}")
+            return False
     
     def expand_query_with_synonyms(self, query):
         """使用同义词扩展查询内容"""
@@ -127,26 +160,37 @@ class SemanticAnalyzer:
         expanded_terms = self.expand_query_with_synonyms(query)
         expanded_query_info = f"扩展关键词: {', '.join(expanded_terms)}" if expanded_terms else ""
         
-        system_prompt = """你是一个母婴行业专业视频内容分析专家，特别精通婴幼儿营养、喂养和奶粉产品信息。
-你的任务是深入理解视频内容与用户查询之间的语义关联，提供专业的匹配分析。
+        # 🔧 使用统一的prompt配置
+        try:
+            templates = sync_prompt_templates()
+            
+            # 使用统一的语义分析prompt模板
+            system_prompt = """你是母婴内容分析专家，专注婴幼儿营养、喂养及奶粉产品。任务：深入分析视频内容与用户查询的语义关联。
 
-你需要考虑以下因素:
-1. 内容直接相关性 - 视频是否明确讨论了查询主题
-2. 语义关联性 - 视频内容是否包含与查询相关的概念、术语或同义表达
-3. 解决方案匹配度 - 视频是否提供了与用户查询相关的解决方案或建议
-4. 目标人群适配性 - 视频内容是否适合查询所针对的人群
-5. 产品适配性 - 视频中讨论的产品是否符合查询需求
+评估维度:
+1. 内容直接相关性 (明确讨论查询主题)
+2. 语义关联性 (相关概念/术语/同义表达)
+3. 解决方案匹配度 (提供相关解决方案/建议)
+4. 目标人群适配性 (适合查询人群)
+5. 产品适配性 (产品符合查询需求)
 
-你应当理解母婴行业的专业术语和同义词,例如:
-- "免疫力"相关: 自御力、抵抗力、保护力等
-- "配方"相关: 奶粉配方、营养配方、特殊配方等
-- "消化问题"相关: 便秘、腹泻、肠胃不适、排便等
+理解行业术语/同义词，如 "免疫力" (自御力/抵抗力), "配方" (营养/特殊配方), "消化问题" (便秘/腹泻)。
+品牌术语注意: "启赋水奶" (即饮液态奶), "启赋蕴淳" (特定系列奶粉), "HMO" (母乳低聚糖), "A2蛋白" (特定牛奶蛋白)。
+"""
+            
+        except Exception as e:
+            logger.warning(f"无法导入统一prompt模板: {e}")
+        system_prompt = """你是母婴内容分析专家，专注婴幼儿营养、喂养及奶粉产品。任务：深入分析视频内容与用户查询的语义关联。
 
-对于品牌术语,要特别注意:
-- "启赋水奶": 指启赋品牌的即饮型液态奶
-- "启赋蕴淳": 指启赋品牌的特定系列奶粉
-- "HMO": 指人乳低聚糖,是一种重要的母乳成分
-- "A2蛋白": 指一种特定的牛奶蛋白类型
+评估维度:
+1. 内容直接相关性 (明确讨论查询主题)
+2. 语义关联性 (相关概念/术语/同义表达)
+3. 解决方案匹配度 (提供相关解决方案/建议)
+4. 目标人群适配性 (适合查询人群)
+5. 产品适配性 (产品符合查询需求)
+
+理解行业术语/同义词，如 "免疫力" (自御力/抵抗力), "配方" (营养/特殊配方), "消化问题" (便秘/腹泻)。
+品牌术语注意: "启赋水奶" (即饮液态奶), "启赋蕴淳" (特定系列奶粉), "HMO" (母乳低聚糖), "A2蛋白" (特定牛奶蛋白)。
 """
         
         # 准备上下文信息
@@ -379,55 +423,17 @@ class SemanticAnalyzer:
 
         # 使用f-string结合多行字符串来构建SYSTEM_PROMPT_TEMPLATE
         # 注意：在f-string中要表示字面量的花括号 { 或 }，需要使用双花括号 {{ 或 }}
-        SYSTEM_PROMPT_TEMPLATE = f'''你是一个专业的母婴视频内容分析师，擅长精确识别视频的目标人群。
+        SYSTEM_PROMPT_TEMPLATE = f'''你是专业的母婴视频内容分析师，任务：根据视频转录文本，从预定义的目标人群列表中选择**唯一一个最匹配**的分类。
 
-你的任务是根据视频转录文本，从预定义的目标人群列表中选择**唯一一个最匹配**的分类。
+目标人群列表及其定义：{target_groups_json_array_for_prompt}
 
-目标人群列表及其详细定义：{target_groups_json_array_for_prompt}
-
-**人群判断指导原则：**
-
-1. **孕期妈妈**：
-   - 关键词：怀孕、孕期、待产包、产检、建档、准妈妈、卸货、分娩、生产、产科
-   - 场景：讨论孕期营养、待产准备、产前产后护理、新生儿喂养准备
-   - 时间节点：怀孕期间、分娩前后、产后初期（0-42天）
-
-2. **二胎妈妈**：
-   - 关键词：二胎、老大、老二、两个孩子、大宝、二宝、再次怀孕
-   - 场景：比较两胎经验、多孩子养育、二胎备孕/怀孕
-
-3. **混养妈妈**：
-   - 关键词：混合喂养、混喂、亲喂、奶粉混合、母乳不足、奶量不够
-   - 场景：母乳与奶粉结合喂养、奶水不足补充
-
-4. **新手爸妈**：
-   - 关键词：新手、没有经验、第一次、新生儿、不知道怎么、学习、初次
-   - 场景：初为父母、缺乏育儿经验、学习喂养知识
-   - 包含：新手爸爸、新手妈妈、初次育儿的父母
-
-5. **贵妇妈妈**：
-   - 关键词：高端、奢华、精致、品质、贵、高价、进口、顶级
-   - 场景：追求高品质产品、注重品牌档次、消费能力强
-
-**优先级判断规则（按重要性排序）：**
-1. 如果同时匹配多个人群，按以下优先级选择：
-   - "二胎妈妈" > "孕期妈妈" > "混养妈妈" > "贵妇妈妈" > "新手爸妈"
-2. 如果提到"刚生完"、"产后"、"新生宝宝"、"出生后"等产后早期关键词，优先考虑"孕期妈妈"
-3. 如果明确提到"二胎"、"老大老二"等多孩经验，优先选择"二胎妈妈"
-4. 如果明确提到"混合喂养"、"奶水不足"等，优先选择"混养妈妈"
-5. 如果强调"高端"、"奢华"等品质追求，优先选择"贵妇妈妈"
-6. 其他情况或无明确特征时，选择"新手爸妈"
-
-**重要要求：**
-- **必须且只能**选择一个最匹配的人群
-- 不允许返回多个人群或空数组
-- 必须基于内容特征进行判断，不能随意选择
+分析要求：
+1. 基于文本中最显著的关键词、场景和讨论焦点，判断最相关的目标人群。
+2. 综合考虑文本整体内容，选择**唯一一个最主要**的目标人群。
+3. **必须且只能**从上述列表中选择一个分类。
 
 输出格式：
-{{{{
-  "target_audience": "从上述列表中选择的唯一一个人群分类"
-}}}}
-'''
+{{{{  "target_audience": "从列表中选择的唯一人群分类"}}}}'''
 
         # 准备用户提示模板
         user_prompt = f"""请仔细分析以下视频转录文本，识别出**唯一一个最匹配**的目标人群：
@@ -980,74 +986,30 @@ class SemanticAnalyzer:
             ValueError: 如果API响应无效或JSON解析失败。
             requests.exceptions.RequestException: 如果API请求失败。
         """
-        import requests
-        import json
         import re
         import traceback
         
-        # 🆕 集成用户反馈
-        try:
-            from streamlit_app.modules.analysis.feedback_manager import get_feedback_manager
-            feedback_manager = get_feedback_manager()
-        except ImportError:
-            feedback_manager = None
-            logger.warning("无法导入反馈管理器，将使用基础提示词")
-        
         # 构建基础系统提示
-        base_system_prompt = (
-            "你是一位专业的视频内容结构分析师。你的任务是分析一个以SRT字幕行形式提供的视频转录文本，"
-            "并将连续的SRT行组合成符合预定义语义类型的逻辑区块。"
-            "每个SRT行都有一个唯一的行号（例如 L1, L2, ...）。你需要确定每个语义区块由哪些SRT行组成。"
-            f"\n\n【预定义的语义区块类型及其说明】:\n{type_descriptions_formatted_str}"
-            "\n\n【核心分段原则 - 按重要性排序】："
-            "\n🔥 1. 产品类型变化强制分段：当内容从一个产品切换到另一个产品时，必须立即创建新的片段"
-            "\n   - 启赋蕴淳 → 启赋水奶：必须分段"
-            "\n   - 启赋水奶 → 启赋蕴淳：必须分段"
-            "\n   - 任何产品 → 其他产品：必须分段"
-            "\n   - 即使语义类型相同（如都是'产品优势'），也要分成不同片段"
-            "\n\n⭐ 2. 句子完整性（极其重要）：确保每个语义区块都以完整的句子开始和结束"
-            "\n   - 🚫 禁止在句子中间切断：避免'大家好，欢迎来到我们的' + '产品介绍视频。'这样的切分"
-            "\n   - ✅ 正确做法：'大家好，欢迎来到我们的产品介绍视频。'作为完整片段"
-            "\n   - 🚫 避免以连接词开始：'而且'、'并且'、'同时'、'另外'、'因此'、'所以'等"
-            "\n   - 🚫 避免以代词开始：'那么'、'这样'、'这个'、'那个'、'它'、'他'、'她'等"
-            "\n   - ✅ 确保以句号、感叹号、问号结尾：'。'、'！'、'？'"
-            "\n   - 📏 优先在自然语音停顿处分段，如句号、感叹号、问号后"
-            "\n\n3. 语义连贯性：相同语义类型且相同产品的内容归为一个区块"
-            "\n4. 自然停顿：优先在自然的语音停顿处分段"
-            "\n5. 适度长度：每个区块应该有合理的长度"
+        system_prompt = (
+            "你是一位专业的视频内容结构分析师。任务：分析SRT字幕行文本，将连续SRT行组合成符合预定义语义类型的逻辑区块。"
+            f"每个SRT行有唯一行号 (L1, L2, ...)。确定每个语义区块的SRT行组成。\n"
+            f"\n【语义区块类型定义】:\n{type_descriptions_formatted_str}"
+            "\n\n【核心分段原则 (按重要性)】："
+            "\n🔥 1. 产品类型变化强制分段：不同产品内容（如启赋蕴淳 vs 启赋水奶）必须分段，即使语义类型相同。"
+            "\n⭐ 2. 句子完整性：确保区块以完整句子开始和结束。避免在句中切断，或以连接词/代词开始。优先在自然停顿处（句号、感叹号、问号后）分段。"
+            "\n3. 语义连贯性：相同语义类型和产品的内容归为一区块。"
+            "\n4. 自然停顿与适度长度：优先在自然语音停顿处分段，保持区块长度合理。"
             "\n\n【产品识别关键词】："
             "\n- 启赋蕴淳：'启赋蕴淳'、'蕴淳'"
             "\n- 启赋水奶：'启赋水奶'、'水奶'、'液态奶'、'即饮'"
             "\n- 启赋蓝钻：'启赋蓝钻'、'蓝钻'"
-            "\n\n【句子完整性检查清单】："
-            "\n✅ 每个片段的第一行是否以完整句子开始？"
-            "\n✅ 每个片段的最后一行是否以句号、感叹号或问号结尾？"
-            "\n✅ 是否避免了在句子中间强行切断？"
-            "\n✅ 是否避免了以连接词或代词开始新片段？"
-            "\n\n【产品变化分段示例】："
-            "\n错误示例：L1-L5讲启赋蕴淳的优势，L6-L10讲启赋水奶的优势，但归为同一个'产品优势'片段"
-            "\n正确示例：L1-L5归为'产品优势'片段（启赋蕴淳），L6-L10归为另一个'产品优势'片段（启赋水奶）"
-            "\n\n【特别注意】："
-            "\n⚠️ 发现以下转换词时，通常表示产品切换，必须分段："
-            "\n   - '现在我们来看看'、'接下来介绍'、'另外还有'、'除此之外'"
-            "\n   - '我们再来看'、'还有一款'、'另一个产品'"
-            "\n\n⚠️ 细粒度分段优于粗粒度分段：宁可多分几个片段，也不要将不同产品混在一起"
-            "\n\n请严格按照以下JSON格式输出一个列表，确保产品变化时必须分段："
+            "\n\n【特别注意 - 产品切换提示词】：发现如 '现在我们来看看', '接下来介绍'、'另外还有'、'我们再来看' 等词时，通常表示产品切换，必须分段。"
+            "\n细粒度分段优于粗粒度：宁可多分段，勿混淆不同产品。"
+            "\n\n【输出格式】JSON列表:"
             '\n[\n  {\n    "segment_type": "产品优势",\n    "start_line_id": 1,\n    "end_line_id": 3,\n    "note": "启赋蕴淳产品优势"\n  },\n'
             '  {\n    "segment_type": "产品优势",\n    "start_line_id": 4,\n    "end_line_id": 6,\n    "note": "启赋水奶产品优势"\n  }\n]'
         )
         
-        # 🆕 应用用户反馈改进提示词
-        if feedback_manager:
-            try:
-                system_prompt = feedback_manager.apply_feedback_to_prompt(base_system_prompt)
-                logger.info("已应用用户反馈改进提示词")
-            except Exception as e:
-                logger.warning(f"应用用户反馈失败，使用基础提示词: {e}")
-                system_prompt = base_system_prompt
-        else:
-            system_prompt = base_system_prompt
-
         # 构建用户提示
         user_prompt = (
             "请根据以下逐行标记的SRT转录文本进行语义区块划分。"
@@ -1092,7 +1054,7 @@ class SemanticAnalyzer:
             
             logger.debug(f"准备调用DeepSeek API，提示词长度: {len(system_prompt) + len(user_prompt)}")
             
-            response = requests.post(
+            response = self.requests.post(
                 f"{self.base_url}/v1/chat/completions",
                 headers=headers,
                 json=data,

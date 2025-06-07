@@ -25,21 +25,30 @@ class GoogleVideoAnalyzer:
         Args:
             credentials_path: Google Cloud凭据文件路径
         """
-        # 默认凭据路径，用户可以通过参数覆盖
-        default_cred_path = "data/temp/google_cloud/video-ai-461014-d0c437ff635f.json"
-
-        self.credentials_path = (
-            credentials_path or
-            os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or
-            default_cred_path
-        )
+        # 🔧 修复：正确的凭据路径优先级
+        # 1. 用户提供的路径
+        # 2. data/temp/google_cloud/下的实际凭据文件（优先）
+        # 3. temp/目录下的通用凭据文件
+        # 4. 环境变量指定的路径（最后）
+        actual_cred_path = "data/temp/google_cloud/video-ai-461014-d0c437ff635f.json"
+        temp_cred_path = "temp/google_credentials.json"
+        
+        if credentials_path:
+            self.credentials_path = credentials_path
+        elif os.path.exists(actual_cred_path):
+            self.credentials_path = actual_cred_path
+        elif os.path.exists(temp_cred_path):
+            self.credentials_path = temp_cred_path
+        else:
+            self.credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        
         self.client = None
         self.storage_client = None
         self.project_id = None
 
         # 设置环境变量
         if self.credentials_path and os.path.exists(self.credentials_path):
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = self.credentials_path
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(os.path.abspath(self.credentials_path))
             logger.info(f"使用Google Cloud凭据: {self.credentials_path}")
 
             # 获取项目ID
@@ -47,6 +56,7 @@ class GoogleVideoAnalyzer:
                 with open(self.credentials_path, 'r', encoding='utf-8') as f:
                     cred_data = json.load(f)
                     self.project_id = cred_data.get('project_id')
+                    logger.info(f"项目ID: {self.project_id}")
             except Exception as e:
                 logger.warning(f"无法读取项目ID: {e}")
         else:

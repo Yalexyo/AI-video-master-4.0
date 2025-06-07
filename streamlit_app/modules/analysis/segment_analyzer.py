@@ -12,6 +12,8 @@ import concurrent.futures
 from typing import List, Dict, Any, Tuple
 import streamlit as st
 from pathlib import Path
+import os
+import requests
 
 from streamlit_app.config.config import get_config
 
@@ -49,25 +51,91 @@ class SegmentAnalyzer:
     """片段分析器，专门用于分析单个视频片段的产品类型和核心卖点"""
     
     def __init__(self):
-        """初始化片段分析器"""
-        config = get_config()
-        self.api_key = config.get("api_key") or "sk-test-api-key-for-development-only"
+        """初始化SegmentAnalyzer"""
+        try:
+            self.api_key = os.environ.get("DEEPSEEK_API_KEY")
+            if not self.api_key:
+                raise ValueError("DEEPSEEK_API_KEY环境变量未设置")
+            
         self.base_url = "https://api.deepseek.com"
         self.model = "deepseek-chat"
-        
-        # 动态获取配置
-        self.product_types = config.get("PRODUCT_TYPES", ["启赋水奶", "启赋蕴淳", "启赋蓝钻"])
-        self.selling_points = config.get("SELLING_POINTS", ["HMO & 母乳低聚糖", "自愈力", "品牌实力", "A2奶源", "开盖即饮", "精准配比"])
-        self.analysis_prompt = config.get("ANALYSIS_PROMPT", DEFAULT_ANALYSIS_PROMPT)
-        
-        # 导入requests模块
-        try:
-            import requests
             self.requests = requests
-            logger.info("片段分析器初始化完成")
-        except ImportError as e:
-            logger.error(f"导入requests模块失败: {e}")
-            raise
+            
+            # 🔧 使用统一的prompt配置
+            try:
+                from streamlit_app.utils.keyword_config import sync_prompt_templates, get_keyword_config
+                config = get_keyword_config()
+                
+                # 从配置文件获取产品类型和卖点
+                self.product_types = config.get("product_types", [
+                    "启赋蕴淳",
+                    "启赋水奶", 
+                    "启赋蓝钻",
+                    "其他奶粉产品"
+                ])
+                
+                self.selling_points = config.get("selling_points", [
+                    "A2蛋白",
+                    "HMO母乳低聚糖", 
+                    "DHA",
+                    "营养配方",
+                    "科学喂养",
+                    "免疫力",
+                    "消化吸收",
+                    "大脑发育"
+                ])
+                
+                # 使用统一的分析prompt
+                self.analysis_prompt = config.get("analysis_prompt", self._get_fallback_prompt())
+                
+            except Exception as e:
+                logger.warning(f"无法导入统一配置，使用默认配置: {e}")
+                self.product_types = [
+                    "启赋蕴淳",
+                    "启赋水奶", 
+                    "启赋蓝钻",
+                    "其他奶粉产品"
+                ]
+                
+                self.selling_points = [
+                    "A2蛋白",
+                    "HMO母乳低聚糖", 
+                    "DHA",
+                    "营养配方",
+                    "科学喂养",
+                    "免疫力",
+                    "消化吸收",
+                    "大脑发育"
+                ]
+                
+                self.analysis_prompt = self._get_fallback_prompt()
+                
+        except Exception as e:
+            raise RuntimeError(f"初始化SegmentAnalyzer失败: {e}")
+    
+    def _get_fallback_prompt(self) -> str:
+        """获取兜底prompt模板"""
+        return """你是专业的母婴产品分析师，擅长识别视频内容中的产品类型和核心卖点。
+
+预定义的产品类型列表：
+{product_types}
+
+预定义的核心卖点列表：
+{selling_points}
+
+请分析视频片段文本，识别其中提到的产品类型和核心卖点。
+
+输出要求：
+1. 只能从预定义列表中选择产品类型和卖点
+2. 如果未明确提到产品，product_type返回空字符串
+3. 卖点可以选择多个，但必须确实在文本中有体现
+4. 返回标准JSON格式
+
+输出格式：
+{{
+  "product_type": "产品类型名称或空字符串",
+  "selling_points": ["卖点1", "卖点2"]
+}}"""
 
     def analyze_single_segment(self, segment_text: str, semantic_type: str) -> Dict[str, Any]:
         """
