@@ -12,7 +12,7 @@ import platform
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from streamlit_app.config.config import get_semantic_segment_types, DEFAULT_SEMANTIC_SEGMENT_TYPES, get_config
+from config.config import get_semantic_segment_types, DEFAULT_SEMANTIC_SEGMENT_TYPES, get_config
 
 
 class SegmentEditor:

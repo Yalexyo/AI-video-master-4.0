@@ -22,13 +22,13 @@ class MixingConfig:
     @classmethod
     def get_video_pool_path(cls) -> str:
         """获取video pool路径"""
-        from streamlit_app.utils.path_utils import get_video_pool_path
+        from utils.path_utils import get_video_pool_path
         return str(get_video_pool_path())
     
     @classmethod
     def get_output_path(cls) -> str:
         """获取输出路径"""
-        from streamlit_app.utils.path_utils import get_output_path
+        from utils.path_utils import get_output_path
         return str(get_output_path())
     
     DEFAULT_VIDEO_POOL_PATH = None  # 动态获取

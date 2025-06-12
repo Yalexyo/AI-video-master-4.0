@@ -1,0 +1,12 @@
+{
+  "benchmark_file": "../data/input/test_videos/通用-保护薄弱期-HMO&自御力-启赋-CTA7.srt",
+  "timestamp": "2025-06-08T20:39:19.059641",
+  "annotations": {
+    "1": "痛点",
+    "2": "痛点",
+    "3": "解决方案",
+    "4": "卖点",
+    "5": "促销"
+  },
+  "entries_count": 5
+}

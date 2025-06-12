@@ -217,12 +217,29 @@ class HighEfficiencyVideoAnalyzer:
         """🎯 为每个片段确定最优分析参数"""
         params_map = {}
         
+        # 🎯 NEW: 导入短视频优化器进行文件过滤
+        try:
+            from utils.short_video_optimizer import ShortVideoOptimizer
+            optimizer = ShortVideoOptimizer()
+        except ImportError:
+            optimizer = None
+        
         for segment in segments:
+            # 🎯 NEW: 过滤过小的文件
+            if optimizer and not optimizer.should_process_video(str(segment)):
+                continue  # 跳过过小的文件
+            
+            # 🎯 NEW: 获取文件大小进行更精细的优化
+            try:
+                file_size_mb = segment.stat().st_size / (1024 * 1024)
+            except:
+                file_size_mb = 0
+            
             if segment in groups.get("short", []):
-                # 短片段：高帧率，充分采样
+                # 🎯 短视频：根据文件大小进行优化
                 params_map[segment] = {
                     "frame_rate": 4.0,
-                    "quality_threshold": 0.7,
+                    "quality_threshold": 0.45,  # 适度降低质量阈值
                     "retry_count": 2
                 }
             elif segment in groups.get("long", []):
@@ -275,7 +292,7 @@ class HighEfficiencyVideoAnalyzer:
     ) -> Optional[Dict[str, Any]]:
         """🎯 优化的Qwen分析"""
         try:
-            from streamlit_app.modules.ai_analyzers import QwenVideoAnalyzer
+            from modules.ai_analyzers import QwenVideoAnalyzer
             
             analyzer = QwenVideoAnalyzer()
             if not analyzer.is_available():
@@ -299,7 +316,7 @@ class HighEfficiencyVideoAnalyzer:
                     'file_size': segment_file.stat().st_size / (1024*1024),
                     'model': 'Qwen2.5-Optimized',
                     'object': result.get('object', '无'),
-                    'sence': result.get('sence', '无'),
+                    'scene': result.get('scene', '无'),
                     'emotion': result.get('emotion', '无'),
                     'brand_elements': result.get('brand_elements', '无'),
                     'confidence': result.get('confidence', 0.0),
@@ -341,7 +358,7 @@ class HighEfficiencyVideoAnalyzer:
     def _is_result_sufficient(self, result: Dict[str, Any]) -> bool:
         """判断分析结果是否充分"""
         empty_count = 0
-        check_fields = ['object', 'sence', 'emotion', 'brand_elements']
+        check_fields = ['object', 'scene', 'emotion', 'brand_elements']
         
         for field in check_fields:
             value = result.get(field, '')

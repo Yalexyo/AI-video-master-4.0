@@ -7,10 +7,10 @@ import streamlit as st
 from datetime import datetime
 from typing import Dict, Any
 
-from streamlit_app.config.config import get_config, TARGET_GROUPS, SELLING_POINTS, PRODUCT_TYPES, BRAND_KEYWORDS, get_semantic_segment_types, get_semantic_type_definitions, DEFAULT_SEMANTIC_SEGMENT_TYPES
+from config.config import get_config, TARGET_GROUPS, SELLING_POINTS, PRODUCT_TYPES, BRAND_KEYWORDS, get_semantic_segment_types, get_semantic_type_definitions, DEFAULT_SEMANTIC_SEGMENT_TYPES
 from sentence_transformers import SentenceTransformer, util
 import torch
-from streamlit_app.utils.keyword_config import sync_prompt_templates
+from utils.keyword_config import sync_prompt_templates
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -417,7 +417,7 @@ class SemanticAnalyzer:
 
         import json # 确保导入json
         # 从config中导入TARGET_GROUPS，以便在提示词中使用
-        from streamlit_app.config.config import TARGET_GROUPS
+        from config.config import TARGET_GROUPS
 
         target_groups_json_array_for_prompt = json.dumps(TARGET_GROUPS, ensure_ascii=False)
 
@@ -615,7 +615,7 @@ class SemanticAnalyzer:
             srt_text_for_llm += f"L{entry['id']}: {entry['text']}\n"
 
         # 3. 获取语义类型定义
-        from streamlit_app.config.config import get_semantic_segment_types, get_semantic_type_definitions
+        from config.config import get_semantic_segment_types, get_semantic_type_definitions
         semantic_segment_types = get_semantic_segment_types()
         semantic_definitions = get_semantic_type_definitions()
 
@@ -1173,7 +1173,7 @@ class IntentAnalyzer:
             logger.warning("没有提供音频片段数据。")
             return []
 
-        from streamlit_app.config.config import get_semantic_type_definitions, DEFAULT_SEMANTIC_SEGMENT_TYPES
+        from config.config import get_semantic_type_definitions, DEFAULT_SEMANTIC_SEGMENT_TYPES
 
         # 动态获取语义类型定义
         semantic_definitions = get_semantic_type_definitions()
@@ -1335,7 +1335,7 @@ def main_analysis_pipeline(video_path, target_audience=None, product_type=None, 
     Returns:
         Tuple: (分析结果列表, 完整的转录数据字典) 或 ([], None) 如果失败
     """
-    from streamlit_app.modules.data_process.video_segmenter import segment_video # 保持局部导入
+    from modules.data_process.video_segmenter import segment_video # 保持局部导入
     
     full_transcript_data = None # 初始化
     analysis_results_placeholder = [] # 返回一个空列表作为分析结果的占位符

@@ -10,6 +10,38 @@ clear
 echo "🏭 正在启动母婴视频智能工厂..."
 echo "======================================"
 
+# 🔥 彻底终结所有相关进程
+echo "🔥 正在终结所有相关进程..."
+echo "   - 查找并终止 Streamlit 进程..."
+
+# 方法1: 通过进程名终止
+pkill -f streamlit 2>/dev/null && echo "   ✅ 已终止 streamlit 进程" || echo "   ℹ️  未发现 streamlit 进程"
+
+# 方法2: 通过应用名终止
+pkill -f "主页.py" 2>/dev/null && echo "   ✅ 已终止 主页.py 进程" || echo "   ℹ️  未发现 主页.py 进程"
+
+# 方法3: 通过端口终止 (8501-8510)
+for port in {8501..8510}; do
+    PID=$(lsof -ti:$port 2>/dev/null)
+    if [ ! -z "$PID" ]; then
+        kill -9 $PID 2>/dev/null && echo "   ✅ 已终止端口 $port 上的进程 (PID: $PID)"
+    fi
+done
+
+# 等待进程完全终止
+sleep 2
+echo "✅ 进程清理完成"
+
+# 🧹 缓存清理
+echo "🧹 正在清理应用缓存..."
+if [ -f "scripts/clear_cache.py" ]; then
+    python3 scripts/clear_cache.py || echo "⚠️  缓存清理失败，继续启动"
+    echo "✅ 缓存清理完成"
+else
+    echo "⚠️  未找到缓存清理脚本，跳过"
+fi
+echo "======================================"
+
 # 获取脚本所在目录的绝对路径
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 echo "📁 项目目录: $SCRIPT_DIR"

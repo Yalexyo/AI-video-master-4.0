@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from pathlib import Path
-from streamlit_app.config.config import get_paths_config
+from config.config import get_paths_config
 
 # Logger will be passed from the calling module (e.g., app.py)
 # logger = logging.getLogger(__name__) # Avoid creating a new logger instance here

@@ -40,13 +40,13 @@ class FactoryConfig:
         @classmethod
         def get_video_pool_path(cls) -> str:
             """获取video pool路径"""
-            from streamlit_app.utils.path_utils import get_google_video_path
+            from utils.path_utils import get_google_video_path
             return str(get_google_video_path())
         
         @classmethod
         def get_output_path(cls) -> str:
             """获取输出路径"""
-            from streamlit_app.utils.path_utils import get_output_path
+            from utils.path_utils import get_output_path
             return str(get_output_path())
         
         DEFAULT_VIDEO_POOL_PATH = None  # 动态获取
@@ -96,6 +96,16 @@ class FactoryConfig:
                 "人脸", "面部", "头像", "特写", "肖像", "脸部",
                 "眼睛", "嘴唇", "鼻子", "面孔", "头部特写"
             ]
+        },
+        # 🎯 NEW: 短视频优化配置
+        "short_video_optimization": {
+            "enabled": True,
+            "file_size_threshold_mb": 1.0,        # 小于1MB视为短视频
+            "duration_threshold_sec": 5.0,        # 小于5秒视为短视频  
+            "quality_threshold_reduction": 0.15,   # 短视频质量阈值降低0.15
+            "frame_rate_boost": 2.0,               # 短视频帧率提升倍数
+            "max_frame_rate": 8.0,                 # 短视频最大帧率限制
+            "min_file_size_mb": 0.5                # 小于此大小的文件将被过滤
         }
     }
     

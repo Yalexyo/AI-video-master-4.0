@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 
 # 导入配置
-from streamlit_app.config.factory_config import FactoryConfig
+from config.factory_config import FactoryConfig
 
 
 def render_video_upload_section() -> Optional[Any]:
@@ -278,7 +278,7 @@ def render_analysis_results_display(results: Dict[str, Any], analysis_type: str 
                 "大小(MB)": f"{result.get('file_size', 0):.1f}",
                 "模型": result.get("model", "Unknown"),
                 "物体": result.get("object", "无"),
-                "场景": result.get("sence", "无"),
+                "场景": result.get("scene", "无"),
                 "情感": result.get("emotion", "无"),
                 "置信度": f"{result.get('confidence', 0):.2f}"
             })
@@ -368,7 +368,7 @@ def render_credentials_check() -> bool:
     # Google Cloud凭据检查
     if st.button("🔍 检查Google Cloud凭据", key="assembly_check_credentials"):
         try:
-            from streamlit_app.modules.ai_analyzers import GoogleVideoAnalyzer
+            from modules.ai_analyzers import GoogleVideoAnalyzer
             analyzer = GoogleVideoAnalyzer()
             has_credentials, cred_path = analyzer.check_credentials()
             
@@ -513,328 +513,656 @@ def render_prompt_configuration() -> None:
         
     with tab2:
         _render_prompt_previews()
-    
-    # 💡 提示：业务分类规则配置已移至调试工厂
-    st.info("""
-    🔧 **业务分类规则配置功能已迁移至调试工厂！**
-    
-    📍 **新功能位置**: 🐛 调试工厂 → 📋 映射规则详细检查
-    
-    🎯 **升级优势**:
-    - ✅ 实时规则预览和编辑
-    - ✅ 立即测试修改效果  
-    - ✅ 可视化调试过程
-    - ✅ 排除关键词验证
-    
-    👉 点击左侧导航中的 🐛调试工厂 进行规则配置
-    """)
 
 
 def _render_ai_recognition_config() -> None:
-    """渲染AI识别配置界面"""
+    """渲染AI识别配置界面 - 通用配置置顶设计"""
     import time
     
     st.markdown("#### 🤖 AI识别词库配置")
     st.write("配置AI模型识别视频内容时使用的基础词汇表")
     
+    st.info("""
+    📝 **编辑说明**: 每个字段都可以独立编辑和保存，修改后点击对应的保存按钮即可生效
+    """)
+    
     try:
-        from streamlit_app.utils.optimized_keyword_manager import keyword_manager
+        from utils.optimized_keyword_manager import keyword_manager
         current_config = keyword_manager.get_ai_recognition_config()
     except ImportError:
         st.error("无法导入优化的关键词管理器，请检查安装")
         return
+
+    # =============================================================================
+    # 🌐 通用AI配置 (置顶显示)
+    # =============================================================================
+    st.markdown("---")
+    st.markdown("### 🌐 通用AI配置")
+    st.info("**视觉和音频AI共享的配置**，修改后同时影响两个AI模型的识别能力")
     
-    # 视觉AI配置
-    with st.expander("👁️ **视觉AI (Qwen) 识别词库**", expanded=True):
-        col1, col2 = st.columns(2)
+    # 🎯 核心品牌配置
+    st.write("**🎯 核心品牌配置 (视觉+音频AI共用):**")
+    current_brands = current_config.get("shared", {}).get("brands", [])
+    brands_str = ", ".join(current_brands)
+    
+    # 显示当前已保存的标签
+    if current_brands:
+        st.markdown("**📋 当前已保存的核心品牌:**")
+        # 将标签按行显示，每行最多5个
+        brand_chunks = [current_brands[i:i+5] for i in range(0, len(current_brands), 5)]
+        for chunk in brand_chunks:
+            cols = st.columns(len(chunk))
+            for i, brand in enumerate(chunk):
+                with cols[i]:
+                    st.code(brand, language=None)
+    else:
+        st.info("💡 尚未配置核心品牌，请在下方输入框中添加")
+    
+    new_brands_str = st.text_area(
+        "🎯 核心品牌理念 (权重 2.0):",
+        value=brands_str,
+        placeholder="illuma, 启赋, 惠氏, 蕴淳, A2",
+        help="视觉AI识别logo标识，音频AI识别品牌名称提及",
+        key="shared_brands",
+        height=80
+    )
+    
+    # 保存品牌按钮
+    if st.button("💾 保存核心品牌", key="save_brands", type="primary"):
+        new_brands_list = [kw.strip() for kw in new_brands_str.split(",") if kw.strip()]
+        try:
+            updated_config = current_config.copy()
+            if "shared" not in updated_config:
+                updated_config["shared"] = {}
+            updated_config["shared"]["brands"] = new_brands_list
+            keyword_manager.save_ai_recognition_config(updated_config)
+            st.success("✅ 核心品牌已保存! (应用于视觉+音频AI)")
+            st.info("🔄 标签已更新，请查看上方显示的当前标签")
+            st.rerun()
+        except Exception as e:
+            st.error(f"保存失败: {e}")
+
+    # 🎭 情绪词库配置 (分正面负面)
+    st.write("**🎭 情绪词库配置 (视觉+音频AI共用):**")
+    
+    # 修改为从ai_batch.emotion获取
+    shared_config = current_config.get("shared", {})
+    ai_batch = shared_config.get("ai_batch", {})
+    emotion_items = ai_batch.get("emotion", [])
+    
+    # 提取word字段
+    current_emotions = []
+    for item in emotion_items:
+        if isinstance(item, dict):
+            word = item.get("word", "")
+            if word:
+                current_emotions.append(word)
+        else:
+            current_emotions.append(str(item))
+    
+    # 如果没有ai_batch格式，尝试传统emotions字段作为兜底
+    if not current_emotions:
+        current_emotions = shared_config.get("emotions", [])
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**😊 正面情绪:**")
         
-        with col1:
-            st.subheader("📦 识别对象")
-            
-            # 基础对象
-            basic_objects_str = ", ".join(current_config["visual"]["objects_basic"])
-            new_basic_objects_str = st.text_area(
-                "基础对象",
-                value=basic_objects_str,
-                placeholder="奶粉罐, 奶瓶, 宝宝, 妈妈",
-                help="AI识别的基础视觉对象",
-                key="qwen_basic_objects",
-                height=80
-            )
-            
-            # 品牌相关对象
-            brand_objects_str = ", ".join(current_config["visual"]["objects_brand"])
-            new_brand_objects_str = st.text_area(
-                "品牌相关对象",
-                value=brand_objects_str,
-                placeholder="品牌logo, 包装, 商标",
-                help="与品牌识别相关的视觉元素",
-                key="qwen_brand_objects",
-                height=80
-            )
-            
-            # 成分相关对象
-            comp_objects_str = ", ".join(current_config["visual"]["objects_composition"])
-            new_comp_objects_str = st.text_area(
-                "成分相关对象",
-                value=comp_objects_str,
-                placeholder="成分表, 营养表, 配料表",
-                help="营养成分和配料表相关对象",
-                key="qwen_comp_objects",
-                height=80
-            )
+        # 显示当前已保存的正面情绪标签
+        if current_emotions:
+            st.markdown("**📋 当前正面情绪标签:**")
+            emotion_chunks = [current_emotions[i:i+3] for i in range(0, len(current_emotions), 3)]
+            for chunk in emotion_chunks:
+                emotion_cols = st.columns(len(chunk))
+                for i, emotion in enumerate(chunk):
+                    with emotion_cols[i]:
+                        st.code(emotion, language=None)
+        else:
+            st.info("💡 尚未配置正面情绪，请在下方输入")
         
-        with col2:
-            st.subheader("🏞️ 场景配置")
-            
-            # 场景
-            scenes_str = ", ".join(current_config["visual"]["scenes"])
-            new_scenes_str = st.text_area(
-                "识别场景",
-                value=scenes_str,
-                placeholder="厨房, 客厅, 医院, 户外",
-                help="AI识别的场景环境",
-                key="qwen_scenes",
-                height=80
-            )
-            
-        # 品牌配置区域
-        st.subheader("🏷️ 品牌识别配置")
-        st.info("💡 专注核心品牌：惠氏、启赋、蕴淳，避免配置过多品牌分散AI注意力")
+        positive_str = ", ".join(current_emotions)
+        new_positive_str = st.text_area(
+            "🧠 情绪与痛点 (权重 1.0):",
+            value=positive_str,
+            height=120,
+            help="积极、正向的情绪词汇，如：快乐、开心、活力满满",
+            key="positive_emotions"
+        )
+    
+    with col2:
+        st.write("**😟 负面情绪:**")
         
-        # 🎯 简化品牌配置 - 只显示一个品牌列表
-        brands_str = ", ".join(current_config["visual"]["brands"])
-        new_brands_str = st.text_area(
-            "🎯 核心品牌（建议3-5个）",
-            value=brands_str,
-            placeholder="惠氏, 启赋, 蕴淳",
-            help="AI会重点识别这些品牌，建议专注核心品牌",
-            key="qwen_brands",
-            height=80
+        # 显示当前已保存的负面情绪标签
+        if current_emotions:
+            st.markdown("**📋 当前负面情绪标签:**")
+            neg_emotion_chunks = [emotion for emotion in current_emotions if emotion not in positive_emotions]
+            neg_emotion_chunks = neg_emotion_chunks[:3]
+            for chunk in neg_emotion_chunks:
+                neg_emotion_cols = st.columns(1)
+                with neg_emotion_cols[0]:
+                    st.code(chunk, language=None)
+        else:
+            st.info("💡 尚未配置负面情绪，请在下方输入")
+        
+        negative_str = ", ".join(neg_emotion_chunks)
+        new_negative_str = st.text_area(
+            "🔍 场景与痛点 (权重 1.0):",
+            value=negative_str,
+            height=120,
+            help="消极、负向的情绪词汇，如：焦虑、痛苦、哭闹",
+            key="negative_emotions"
+        )
+    
+    # 保存情绪词库按钮
+    if st.button("💾 保存情绪词库", key="save_shared_emotions", type="primary"):
+        positive_list = [emo.strip() for emo in new_positive_str.split(",") if emo.strip()]
+        negative_list = [emo.strip() for emo in new_negative_str.split(",") if emo.strip()]
+        combined_emotions = positive_list + negative_list
+        
+        if len(combined_emotions) < 10:
+            st.warning(f"情绪词库较少，建议至少10个，当前为{len(combined_emotions)}个")
+        
+        try:
+            updated_config = current_config.copy()
+            if "shared" not in updated_config:
+                updated_config["shared"] = {}
+            if "ai_batch" not in updated_config["shared"]:
+                updated_config["shared"]["ai_batch"] = {}
+            
+            # 保存为ai_batch格式
+            emotion_batch = [{"word": word, "weight": 2} for word in combined_emotions]
+            updated_config["shared"]["ai_batch"]["emotion"] = emotion_batch
+            
+            # 为了兼容性，也保留traditional格式
+            updated_config["shared"]["emotions"] = combined_emotions
+            
+            keyword_manager.save_ai_recognition_config(updated_config)
+            st.success(f"✅ 情绪词库已保存! 共{len(combined_emotions)}个情绪词汇 (正面:{len(positive_list)}, 负面:{len(negative_list)})")
+            st.info("🔄 标签已更新，请查看上方显示的当前标签")
+            st.rerun()
+        except Exception as e:
+            st.error(f"保存失败: {e}")
+
+    # 通用配置统计
+    st.markdown("**📊 通用配置统计:**")
+    col_stat1, col_stat2, col_stat3 = st.columns(3)
+    with col_stat1:
+        brands_count = len(current_config.get("shared", {}).get("brands", []))
+        st.metric("核心品牌", brands_count)
+    with col_stat2:
+        # 优先从ai_batch获取，兜底用传统emotions
+        shared_config = current_config.get("shared", {})
+        ai_batch = shared_config.get("ai_batch", {})
+        emotion_items = ai_batch.get("emotion", [])
+        emotions_count = len(emotion_items) if emotion_items else len(shared_config.get("emotions", []))
+        st.metric("情绪词汇", emotions_count)
+    with col_stat3:
+        positive_count = len(positive_emotions)
+        negative_count = len(negative_emotions)
+        st.metric("正面/负面", f"{positive_count}/{negative_count}")
+
+    # =============================================================================
+    # 🔍 视觉AI配置
+    # =============================================================================
+    
+    # 主配置区域 - 采用左右分栏设计
+    st.markdown("### 👁️ 视觉AI (Qwen) 识别词库")
+    
+    # 左右分栏
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("✅ 正面规则")
+        
+        # 基础对象配置
+        st.write("**📦 基础识别对象 (权重 2.0):**")
+        
+        # 显示当前已保存的基础对象标签
+        current_basic_objects = current_config["visual"]["objects_basic"]
+        if current_basic_objects:
+            st.markdown("**📋 当前基础识别对象:**")
+            basic_chunks = [current_basic_objects[i:i+3] for i in range(0, len(current_basic_objects), 3)]
+            for chunk in basic_chunks:
+                basic_cols = st.columns(len(chunk))
+                for i, obj in enumerate(chunk):
+                    with basic_cols[i]:
+                        st.code(obj, language=None)
+        else:
+            st.info("💡 尚未配置基础识别对象，请在下方输入")
+        
+        basic_objects_str = ", ".join(current_basic_objects)
+        new_basic_objects_str = st.text_area(
+            "基础识别词库 (用逗号分隔)",
+            value=basic_objects_str,
+            key="qwen_basic_objects",
+            height=80,
+            help="AI识别的基础视觉对象，如：奶粉罐, 奶瓶, 宝宝, 妈妈"
         )
         
-        # 保存视觉配置按钮
-        if st.button("💾 保存视觉AI配置", type="primary", key="save_visual_config"):
-            new_config = {
-                "visual": {
-                    "objects_basic": [kw.strip() for kw in new_basic_objects_str.split(",") if kw.strip()],
-                    "objects_brand": [kw.strip() for kw in new_brand_objects_str.split(",") if kw.strip()],
-                    "objects_composition": [kw.strip() for kw in new_comp_objects_str.split(",") if kw.strip()],
-                    "scenes": [kw.strip() for kw in new_scenes_str.split(",") if kw.strip()],
-                    "brands": [kw.strip() for kw in new_brands_str.split(",") if kw.strip()],
-                    "pain_signals": [kw.strip() for kw in new_pain_signals_str.split(",") if kw.strip()],
-                    "vitality_signals": [kw.strip() for kw in new_vitality_signals_str.split(",") if kw.strip()]
-                },
-                "audio": current_config["audio"],
-                "shared": current_config["shared"]
-            }
-            
-            # 验证配置
-            issues = keyword_manager.validate_config("ai_recognition", new_config)
-            if issues:
-                st.error("配置验证失败：")
-                for issue in issues:
-                    st.text(f"• {issue}")
-            else:
-                success = keyword_manager.save_ai_recognition_config(new_config)
-                if success:
-                    # 设置成功消息和时间戳
-                    import time
-                    st.session_state["save_message_visual"] = {
-                        "type": "success",
-                        "message": "✅ 视觉AI配置保存成功！",
-                        "timestamp": time.time()
-                    }
-                    # 清除缓存并重新加载配置
-                    try:
-                        from streamlit_app.utils.keyword_config import reload_config
-                        reload_config()
-                    except ImportError:
-                        pass
-                    st.rerun()
-                else:
-                    import time
-                    st.session_state["save_message_visual"] = {
-                        "type": "error",
-                        "message": "❌ 保存失败，请检查文件权限",
-                        "timestamp": time.time()
-                    }
+        # 保存基础对象按钮
+        if st.button("💾 保存基础对象", key="save_basic_objects"):
+            new_basic_list = [kw.strip() for kw in new_basic_objects_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                updated_config["visual"]["objects_basic"] = new_basic_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 基础对象已保存!")
+                st.info("🔄 标签已更新，请查看上方显示的当前标签")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+        
+        # 品牌相关对象配置
+        st.write("**🏷️ 品牌识别对象 (权重 1.5):**")
+        brand_objects_str = ", ".join(current_config["visual"]["objects_brand"])
+        new_brand_objects_str = st.text_area(
+            "编辑品牌识别对象",
+            value=brand_objects_str,
+            key="qwen_brand_objects",
+            height=80,
+            help="与品牌识别相关的视觉元素，如：品牌logo, 包装, 商标"
+        )
+        
+        # 保存品牌对象按钮
+        if st.button("💾 保存品牌对象", key="save_brand_objects"):
+            new_brand_list = [kw.strip() for kw in new_brand_objects_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                updated_config["visual"]["objects_brand"] = new_brand_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 品牌对象已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+        
+        # 成分相关对象配置
+        st.write("**🧪 成分识别对象 (权重 1.5):**")
+        comp_objects_str = ", ".join(current_config["visual"]["objects_composition"])
+        new_comp_objects_str = st.text_area(
+            "编辑成分识别对象",
+            value=comp_objects_str,
+            key="qwen_comp_objects",
+            height=80,
+            help="营养成分和配料表相关对象，如：成分表, 营养表, 配料表"
+        )
+        
+        # 保存成分对象按钮
+        if st.button("💾 保存成分对象", key="save_comp_objects"):
+            new_comp_list = [kw.strip() for kw in new_comp_objects_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                updated_config["visual"]["objects_composition"] = new_comp_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 成分对象已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+        
+        # 医疗对象配置
+        st.write("**🏥 医疗相关对象 (权重 1.0):**")
+        medical_objects_str = ", ".join(current_config["visual"].get("objects_medical", []))
+        new_medical_objects_str = st.text_area(
+            "编辑医疗相关对象",
+            value=medical_objects_str,
+            key="qwen_medical_objects",
+            height=80,
+            help="医疗场景相关对象，如：输液管, 病床, 医疗设备, 药品"
+        )
+        
+        # 保存医疗对象按钮
+        if st.button("💾 保存医疗对象", key="save_medical_objects"):
+            new_medical_list = [kw.strip() for kw in new_medical_objects_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                updated_config["visual"]["objects_medical"] = new_medical_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 医疗对象已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+    
+    with col2:
+        st.subheader("🏞️ 场景与信号")
+        
+        # 场景配置
+        st.write("**🏞️ 识别场景 (权重 1.0):**")
+        scenes_str = ", ".join(current_config["visual"]["scenes"])
+        new_scenes_str = st.text_area(
+            "编辑识别场景",
+            value=scenes_str,
+            key="qwen_scenes",
+            height=80,
+            help="AI识别的场景环境，如：厨房, 客厅, 医院, 户外"
+        )
+        
+        # 保存场景按钮
+        if st.button("💾 保存识别场景", key="save_scenes"):
+            new_scenes_list = [kw.strip() for kw in new_scenes_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                updated_config["visual"]["scenes"] = new_scenes_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 识别场景已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+        
+        # 情感配置提示 - 使用共用情绪
+        st.write("**🎭 情感识别配置:**")
+        st.info("💡 视觉AI使用上方共用情绪配置，无需单独设置")
+        
+        # 场景细分配置
+        st.markdown("---")
+        st.write("**🏠 场景细分配置:**")
+        
+        # 室内场景
+        indoor_scenes_str = ", ".join(current_config["visual"].get("scenes_indoor", []))
+        new_indoor_scenes_str = st.text_area(
+            "🏠 室内场景",
+            value=indoor_scenes_str,
+            key="qwen_indoor_scenes",
+            height=70,
+            help="室内环境场景，如：厨房, 客厅, 卧室, 婴儿房"
+        )
+        
+        # 户外场景
+        outdoor_scenes_str = ", ".join(current_config["visual"].get("scenes_outdoor", []))
+        new_outdoor_scenes_str = st.text_area(
+            "🌳 户外场景",
+            value=outdoor_scenes_str,
+            key="qwen_outdoor_scenes",
+            height=70,
+            help="户外环境场景，如：公园, 游乐场, 滑梯, 蹦床"
+        )
+        
+        # 医疗场景
+        medical_scenes_str = ", ".join(current_config["visual"].get("scenes_medical", []))
+        new_medical_scenes_str = st.text_area(
+            "🏥 医疗场景",
+            value=medical_scenes_str,
+            key="qwen_medical_scenes",
+            height=70,
+            help="医疗环境场景，如：医院, 病房, 诊所"
+        )
+        
+        # 演示场景
+        demo_scenes_str = ", ".join(current_config["visual"].get("scenes_demonstration", []))
+        new_demo_scenes_str = st.text_area(
+            "📹 演示场景",
+            value=demo_scenes_str,
+            key="qwen_demo_scenes",
+            height=70,
+            help="产品演示场景，如：台面操作, 产品演示, 冲奶演示"
+        )
+        
+        # 保存场景细分按钮
+        if st.button("💾 保存场景细分", key="save_scene_details"):
+            try:
+                updated_config = current_config.copy()
+                updated_config["visual"]["scenes_indoor"] = [s.strip() for s in new_indoor_scenes_str.split(",") if s.strip()]
+                updated_config["visual"]["scenes_outdoor"] = [s.strip() for s in new_outdoor_scenes_str.split(",") if s.strip()]
+                updated_config["visual"]["scenes_medical"] = [s.strip() for s in new_medical_scenes_str.split(",") if s.strip()]
+                updated_config["visual"]["scenes_demonstration"] = [s.strip() for s in new_demo_scenes_str.split(",") if s.strip()]
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 场景细分已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+    
+
+
+    # 视觉配置统计
+    st.markdown("---")
+    st.subheader("📊 视觉AI配置统计")
+    
+    col_stat1, col_stat2, col_stat3, col_stat4, col_stat5, col_stat6 = st.columns(6)
+    
+    with col_stat1:
+        basic_count = len(current_config["visual"]["objects_basic"])
+        st.metric("基础识别对象", basic_count)
+    
+    with col_stat2:
+        brand_obj_count = len(current_config["visual"]["objects_brand"])
+        st.metric("品牌识别对象", brand_obj_count)
+    
+    with col_stat3:
+        comp_obj_count = len(current_config["visual"]["objects_composition"])
+        st.metric("成分识别对象", comp_obj_count)
+    
+    with col_stat4:
+        medical_obj_count = len(current_config["visual"].get("objects_medical", []))
+        st.metric("医疗相关对象", medical_obj_count)
+    
+    with col_stat5:
+        scenes_count = len(current_config["visual"]["scenes"])
+        st.metric("识别场景", scenes_count)
+    
+    with col_stat6:
+        brands_count = len(current_config["visual"]["brands"])
+        st.metric("核心品牌", brands_count)
+    
+
     
     # 音频AI配置
-    with st.expander("🎤 **音频AI (DeepSeek) 识别词库**", expanded=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            audio_objects_str = ", ".join(current_config["audio"]["objects"])
-            new_audio_objects_str = st.text_area(
-                "音频识别对象",
-                value=audio_objects_str,
-                placeholder="奶粉, 宝宝, 妈妈",
-                help="AI从音频中识别的对象",
-                key="deepseek_objects",
-                height=80
-            )
-        
-        with col2:
-            audio_scenes_str = ", ".join(current_config["audio"]["scenes"])
-            new_audio_scenes_str = st.text_area(
-                "音频识别场景",
-                value=audio_scenes_str,
-                placeholder="冲奶, 指导, 护理",
-                help="AI从音频中识别的场景",
-                key="deepseek_scenes",
-                height=80
-            )
-        
-        # 保存音频配置按钮
-        if st.button("💾 保存音频AI配置", type="primary", key="save_audio_config"):
-            new_config = current_config.copy()
-            new_config["audio"] = {
-                "objects": [kw.strip() for kw in new_audio_objects_str.split(",") if kw.strip()],
-                "scenes": [kw.strip() for kw in new_audio_scenes_str.split(",") if kw.strip()]
-            }
-            
-            success = keyword_manager.save_ai_recognition_config(new_config)
-            if success:
-                # 设置成功消息和时间戳
-                import time
-                st.session_state["save_message_audio"] = {
-                    "type": "success",
-                    "message": "✅ 音频AI配置保存成功！",
-                    "timestamp": time.time()
-                }
-                try:
-                    from streamlit_app.utils.keyword_config import reload_config
-                    reload_config()
-                except ImportError:
-                    pass
-                st.rerun()
-            else:
-                import time
-                st.session_state["save_message_audio"] = {
-                    "type": "error",
-                    "message": "❌ 保存失败",
-                    "timestamp": time.time()
-                }
+    st.markdown("---")
+    st.markdown("### 🎤 音频AI (DeepSeek) 识别词库")
     
-    # 通用配置
-    with st.expander("🌐 **通用AI配置**", expanded=False):
-        emotions_str = " / ".join(current_config["shared"]["emotions"])
-        new_emotions_str = st.text_input(
-            "可识别情绪（必须5个，用 / 分隔）",
-            value=emotions_str,
-            help="AI模型只能从这5种情绪中选择",
-            key="shared_emotions"
+    # 左右分栏 - 与视觉AI保持一致的结构
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("✅ 正面规则")
+        
+        # 音频对象配置
+        st.write("**📦 基础识别对象 (权重 2.0):**")
+        audio_objects_str = ", ".join(current_config["audio"]["objects"])
+        new_audio_objects_str = st.text_area(
+            "编辑基础识别对象",
+            value=audio_objects_str,
+            key="deepseek_objects",
+            height=80,
+            help="AI从音频中识别的对象，如：奶粉, 宝宝, 妈妈"
         )
         
-        # 保存通用配置按钮
-        if st.button("💾 保存通用配置", type="primary", key="save_shared_config"):
-            emotions = [emo.strip() for emo in new_emotions_str.split("/") if emo.strip()]
-            
-            if len(emotions) != 5:
-                st.error(f"情绪必须是5个，当前为{len(emotions)}个")
-            else:
-                new_config = current_config.copy()
-                new_config["shared"]["emotions"] = emotions
-                
-                success = keyword_manager.save_ai_recognition_config(new_config)
-                if success:
-                    # 设置成功消息和时间戳
-                    import time
-                    st.session_state["save_message_shared"] = {
-                        "type": "success",
-                        "message": "✅ 通用配置保存成功！",
-                        "timestamp": time.time()
-                    }
-                    try:
-                        from streamlit_app.utils.keyword_config import reload_config
-                        reload_config()
-                    except ImportError:
-                        pass
-                    st.rerun()
-                else:
-                    import time
-                    st.session_state["save_message_shared"] = {
-                        "type": "error",
-                        "message": "❌ 保存失败",
-                        "timestamp": time.time()
-                    }
-
-    # 显示所有AI识别配置的临时消息（如果存在且未过期）
-    import time
-    for message_key in ["save_message_visual", "save_message_audio", "save_message_shared"]:
-        if message_key in st.session_state:
-            message_data = st.session_state[message_key]
-            elapsed_time = time.time() - message_data["timestamp"]
-            
-            # 检查消息是否超过3秒
-            if elapsed_time < 3:
-                if message_data["type"] == "success":
-                    st.success(message_data["message"])
-                else:
-                    st.error(message_data["message"])
-            else:
-                # 消息过期，删除
-                del st.session_state[message_key]
-
-
+        # 保存音频对象按钮
+        if st.button("💾 保存基础对象", key="save_audio_objects"):
+            new_audio_objects_list = [kw.strip() for kw in new_audio_objects_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                updated_config["audio"]["objects"] = new_audio_objects_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 基础对象已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+        
+        # 品牌提及配置
+        st.write("**🏷️ 品牌识别对象 (权重 1.5):**")
+        brand_mentions_str = ", ".join(current_config["audio"].get("brand_mentions", []))
+        new_brand_mentions_str = st.text_area(
+            "编辑品牌识别对象",
+            value=brand_mentions_str,
+            key="deepseek_brand_mentions",
+            height=80,
+            help="音频中提及的品牌名称，如：启赋, 惠氏, 蕴淳"
+        )
+        
+        # 保存品牌提及按钮
+        if st.button("💾 保存品牌对象", key="save_brand_mentions"):
+            new_brand_mentions_list = [kw.strip() for kw in new_brand_mentions_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                if "brand_mentions" not in updated_config["audio"]:
+                    updated_config["audio"]["brand_mentions"] = []
+                updated_config["audio"]["brand_mentions"] = new_brand_mentions_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 品牌对象已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+        
+        # 产品特性配置
+        st.write("**🧪 成分识别对象 (权重 1.5):**")
+        product_features_str = ", ".join(current_config["audio"].get("product_features", []))
+        new_product_features_str = st.text_area(
+            "编辑成分识别对象",
+            value=product_features_str,
+            key="deepseek_product_features",
+            height=80,
+            help="产品特性和成分描述，如：A2蛋白, DHA, 营养成分"
+        )
+        
+        # 保存产品特性按钮
+        if st.button("💾 保存成分对象", key="save_product_features"):
+            new_product_features_list = [kw.strip() for kw in new_product_features_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                if "product_features" not in updated_config["audio"]:
+                    updated_config["audio"]["product_features"] = []
+                updated_config["audio"]["product_features"] = new_product_features_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 成分对象已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+    
+    with col2:
+        st.subheader("🏞️ 场景与信号")
+        
+        # 音频场景配置
+        st.write("**🎤 音频识别场景 (权重 1.0):**")
+        audio_scenes_str = ", ".join(current_config["audio"]["scenes"])
+        new_audio_scenes_str = st.text_area(
+            "编辑音频识别场景",
+            value=audio_scenes_str,
+            key="deepseek_scenes",
+            height=80,
+            help="AI从音频中识别的场景，如：冲奶演示, 经验分享, 产品测评"
+        )
+        
+        # 保存音频场景按钮
+        if st.button("💾 保存音频场景", key="save_audio_scenes"):
+            new_audio_scenes_list = [kw.strip() for kw in new_audio_scenes_str.split(",") if kw.strip()]
+            try:
+                updated_config = current_config.copy()
+                updated_config["audio"]["scenes"] = new_audio_scenes_list
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 音频场景已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+        
+        # 情感配置提示 - 使用共用情绪
+        st.write("**🎭 情感识别配置:**")
+        st.info("💡 音频AI使用上方共用情绪配置，无需单独设置")
+        
+        # 音频场景细分配置
+        st.markdown("---")
+        st.write("**🎤 音频场景细分配置:**")
+        
+        # 喂养场景
+        feeding_scenes_str = ", ".join(current_config["audio"].get("scenes_feeding", []))
+        new_feeding_scenes_str = st.text_area(
+            "🍼 喂养场景",
+            value=feeding_scenes_str,
+            key="deepseek_feeding_scenes",
+            height=70,
+            help="喂养相关场景，如：冲奶演示, 喂奶时刻, 辅食制作, 冲调"
+        )
+        
+        # 互动场景
+        interaction_scenes_str = ", ".join(current_config["audio"].get("scenes_interaction", []))
+        new_interaction_scenes_str = st.text_area(
+            "🤝 互动场景",
+            value=interaction_scenes_str,
+            key="deepseek_interaction_scenes",
+            height=70,
+            help="亲子互动场景，如：亲子游戏, 睡前准备, 户外活动"
+        )
+        
+        # 分享场景
+        sharing_scenes_str = ", ".join(current_config["audio"].get("scenes_sharing", []))
+        new_sharing_scenes_str = st.text_area(
+            "📢 分享场景",
+            value=sharing_scenes_str,
+            key="deepseek_sharing_scenes",
+            height=70,
+            help="经验分享场景，如：经验分享, 好物推荐, 产品测评, 答疑解惑"
+        )
+        
+        # 生活场景
+        lifestyle_scenes_str = ", ".join(current_config["audio"].get("scenes_lifestyle", []))
+        new_lifestyle_scenes_str = st.text_area(
+            "🏠 生活场景",
+            value=lifestyle_scenes_str,
+            key="deepseek_lifestyle_scenes",
+            height=70,
+            help="日常生活场景，如：日常vlog, 居家生活, 成长记录, 踩雷避坑"
+        )
+        
+        # 保存音频场景细分按钮
+        if st.button("💾 保存音频场景细分", key="save_audio_scene_details"):
+            try:
+                updated_config = current_config.copy()
+                updated_config["audio"]["scenes_feeding"] = [s.strip() for s in new_feeding_scenes_str.split(",") if s.strip()]
+                updated_config["audio"]["scenes_interaction"] = [s.strip() for s in new_interaction_scenes_str.split(",") if s.strip()]
+                updated_config["audio"]["scenes_sharing"] = [s.strip() for s in new_sharing_scenes_str.split(",") if s.strip()]
+                updated_config["audio"]["scenes_lifestyle"] = [s.strip() for s in new_lifestyle_scenes_str.split(",") if s.strip()]
+                keyword_manager.save_ai_recognition_config(updated_config)
+                st.success("✅ 音频场景细分已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+    
+    # 音频配置统计
+    st.markdown("---")
+    st.subheader("📊 音频AI配置统计")
+    
+    col_stat1, col_stat2, col_stat3, col_stat4, col_stat5 = st.columns(5)
+    
+    with col_stat1:
+        audio_obj_count = len(current_config["audio"]["objects"])
+        st.metric("基础识别对象", audio_obj_count)
+    
+    with col_stat2:
+        audio_scenes_count = len(current_config["audio"]["scenes"])
+        st.metric("识别场景", audio_scenes_count)
+    
+    with col_stat3:
+        brand_mentions_count = len(current_config["audio"].get("brand_mentions", []))
+        st.metric("品牌识别对象", brand_mentions_count)
+    
+    with col_stat4:
+        product_features_count = len(current_config["audio"].get("product_features", []))
+        st.metric("成分识别对象", product_features_count)
+    
+    with col_stat5:
+        # 情感词汇已统一到共用配置，此处显示共用情绪数量
+        shared_config = current_config.get("shared", {})
+        ai_batch = shared_config.get("ai_batch", {})
+        emotion_items = ai_batch.get("emotion", [])
+        shared_emotions_count = len(emotion_items) if emotion_items else len(shared_config.get("emotions", []))
+        st.metric("共用情感词汇", shared_emotions_count)
 
 
 def _render_prompt_previews() -> None:
     """渲染AI模型Prompt预览界面"""
     st.markdown("#### 📝 AI模型Prompt预览")
     st.write("根据当前配置生成的AI模型指令预览（只读）")
-    
     try:
-        from streamlit_app.utils.keyword_config import sync_prompt_templates
-        templates = sync_prompt_templates()
-        
-        if templates:
-            with st.expander("👁️ Qwen视觉分析Prompt", expanded=True):
-                if "qwen_visual" in templates:
-                    st.code(templates["qwen_visual"], language="text")
-                    st.caption(f"Prompt长度: {len(templates['qwen_visual'])} 字符")
-                else:
-                    st.error("Qwen Prompt生成失败")
-            
-            with st.expander("🧠 DeepSeek音频分析Prompt", expanded=False):
-                if "deepseek_audio" in templates:
-                    st.code(templates["deepseek_audio"], language="text")
-                    st.caption(f"Prompt长度: {len(templates['deepseek_audio'])} 字符")
-                else:
-                    st.error("DeepSeek Prompt生成失败")
-                    
-            if "qwen_retry" in templates:
-                with st.expander("🔄 Qwen重试Prompt", expanded=False):
-                    st.code(templates["qwen_retry"], language="text")
-                    
-            # 添加配置效果预览
-            st.subheader("🔧 配置效果分析")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**品牌识别强化效果**")
-                qwen_prompt = templates.get("qwen_visual", "")
-                brand_mentions = qwen_prompt.count("重点品牌") + qwen_prompt.count("品牌相关") + qwen_prompt.count("成分相关")
-                st.metric("品牌强化次数", brand_mentions)
-                
-                if brand_mentions >= 3:
-                    st.success("✅ 品牌识别强化充分")
-                else:
-                    st.warning("⚠️ 建议增强品牌识别配置")
-            
-            with col2:
-                st.markdown("**Prompt复杂度**")
-                total_keywords = len(templates.get("qwen_visual", "").split("、"))
-                st.metric("总关键词估算", total_keywords)
-                
-                if total_keywords > 50:
-                    st.success("✅ 关键词配置丰富")
-                else:
-                    st.info("💡 可考虑添加更多关键词")
-        else:
-            st.error("无法生成Prompt模板，请检查配置")
-            
+        from utils.keyword_config import get_qwen_visual_prompt, get_deepseek_audio_prompt
+        qwen_prompt = get_qwen_visual_prompt()
+        deepseek_prompt = get_deepseek_audio_prompt()
+
+        with st.expander("👁️ Qwen视觉分析Prompt", expanded=True):
+            st.code(qwen_prompt, language="text")
+            st.caption(f"Prompt长度: {len(qwen_prompt)} 字符")
+        with st.expander("🧠 DeepSeek音频分析Prompt", expanded=False):
+            st.code(deepseek_prompt, language="text")
+            st.caption(f"Prompt长度: {len(deepseek_prompt)} 字符")
+
+        # 配置效果分析等可保留原有逻辑
     except Exception as e:
         st.error(f"Prompt预览失败: {e}")
         st.info("请确保配置正确并已保存") 

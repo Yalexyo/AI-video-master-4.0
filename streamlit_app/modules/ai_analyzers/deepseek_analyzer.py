@@ -35,7 +35,7 @@ class DeepSeekAnalyzer:
     
     def translate_text(self, english_text: str, target_language: str = "中文") -> Optional[str]:
         """
-        翻译英文文本
+        翻译英文文本（增强版：优先翻译为业务词表中的词汇）
         
         Args:
             english_text: 英文文本
@@ -49,13 +49,30 @@ class DeepSeekAnalyzer:
             return None
         
         try:
+            # 尝试获取业务词表，用于翻译参考
+            try:
+                from utils.keyword_config import load_keywords_config
+                config = load_keywords_config()
+                business_words = []
+                for module in config.values():
+                    if "ai_batch" in module:
+                        for category in module["ai_batch"].values():
+                            for item in category:
+                                if isinstance(item, dict):
+                                    business_words.append(item.get("word", ""))
+                                else:
+                                    business_words.append(str(item))
+                business_words_text = f"\n优先参考业务词汇: {list(set(business_words))}"
+            except:
+                business_words_text = ""
+            
             system_prompt = f"""你是一个专业的英{target_language}翻译专家，专门翻译视频内容识别中的物体和场景标签。
 
 翻译要求：
 1. 只翻译标签内容，返回简洁的{target_language}词汇
 2. 不要添加任何解释、标点符号或额外文字
 3. 对于动物、物品、场景等标签使用常见的{target_language}表达
-4. 保持翻译的准确性和简洁性
+4. 保持翻译的准确性和简洁性{business_words_text}
 
 示例：
 - cat → 猫
@@ -169,6 +186,134 @@ class DeepSeekAnalyzer:
             logger.error(f"视频内容分析失败: {str(e)}")
             return {"error": str(e)}
     
+    def analyze_transcription_content(self, transcript: str, module: str = None) -> Dict[str, Any]:
+        """
+        专门分析语音转录内容，提取业务标签（使用新的业务词表机制）
+        
+        Args:
+            transcript: 视频转录文本
+            module: 指定业务模块（如pain_points），为None时使用全部模块
+            
+        Returns:
+            分析结果字典，包含object/scene/emotion/brand标签
+        """
+        if not self.is_available():
+            logger.warning("DeepSeek API不可用")
+            return {"error": "DeepSeek API不可用", "success": False}
+        
+        if not transcript.strip():
+            return {"error": "转录文本为空", "success": False}
+        
+        try:
+            # 使用新的DeepSeek语音分析Prompt
+            from utils.keyword_config import get_deepseek_audio_prompt
+            analysis_prompt = get_deepseek_audio_prompt(module)
+            
+            # 在Prompt中添加实际转录文本
+            analysis_prompt += f"\n\n📝 需要分析的转录文本：\n{transcript}"
+            
+            # 使用专门的system提示词
+            system_prompt = """你是专业的母婴产品语音内容分析师，专门从语音转录文本中提取语义信息。
+请基于转录内容的语义理解进行分析，严格从业务词表中选择匹配的标签。
+重点分析转录中体现的物品、场景、情感和品牌信息。"""
+            
+            response = self._chat_completion([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": analysis_prompt}
+            ])
+            
+            if response and "choices" in response and response["choices"]:
+                result_text = response["choices"][0].get("message", {}).get("content", "")
+                logger.info(f"🤖 DeepSeek转录内容分析结果: {result_text}")
+                
+                # 解析结果
+                parsed_result = self._parse_transcription_analysis(result_text)
+                
+                if parsed_result:
+                    parsed_result["success"] = True
+                    parsed_result["analysis_method"] = "deepseek_transcription"
+                    return parsed_result
+                else:
+                    return {"error": "解析分析结果失败", "success": False}
+            
+            return {"error": "DeepSeek API响应无效", "success": False}
+            
+        except Exception as e:
+            logger.error(f"DeepSeek转录内容分析失败: {str(e)}")
+            return {"error": str(e), "success": False}
+
+    def _parse_transcription_analysis(self, analysis_text: str) -> Optional[Dict[str, Any]]:
+        """
+        解析DeepSeek转录分析结果
+        """
+        try:
+            import re
+            
+            result = {
+                'object': '',
+                'scene': '', 
+                'emotion': '',
+                'brand_elements': '',
+                'confidence': 0.7
+            }
+            
+            logger.info(f"🎯 开始解析DeepSeek转录分析文本: {analysis_text}")
+            
+            # 按行处理分析结果
+            lines = analysis_text.strip().split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # 提取各个字段
+                if line.lower().startswith('object:'):
+                    result['object'] = line[7:].strip()
+                elif line.lower().startswith('scene:'):
+                    result['scene'] = line[6:].strip()
+                elif line.lower().startswith('emotion:'):
+                    result['emotion'] = line[8:].strip()
+                elif line.lower().startswith('brand:') or line.lower().startswith('brand_elements:'):
+                    if line.lower().startswith('brand:'):
+                        result['brand_elements'] = line[6:].strip()
+                    else:
+                        result['brand_elements'] = line[15:].strip()
+                elif line.lower().startswith('confidence:'):
+                    confidence_text = line[11:].strip()
+                    try:
+                        confidence_match = re.search(r'([0-9.]+)', confidence_text)
+                        if confidence_match:
+                            result['confidence'] = float(confidence_match.group(1))
+                    except:
+                        result['confidence'] = 0.7
+            
+            # 清理和过滤结果
+            for key in ['object', 'scene', 'emotion', 'brand_elements']:
+                if result[key]:
+                    # 基础清理
+                    cleaned = result[key].strip().replace('"', '').replace("'", '')
+                    # 过滤无意义内容
+                    if cleaned.lower() in ['无', '不确定', '空', 'none', '']:
+                        result[key] = ''
+                    else:
+                        result[key] = cleaned
+            
+            # 创建all_tags
+            all_tags = []
+            for value in [result['object'], result['scene'], result['emotion'], result['brand_elements']]:
+                if value:
+                    tags = [tag.strip() for tag in value.split(',') if tag.strip()]
+                    all_tags.extend(tags)
+            
+            result['all_tags'] = list(set(filter(None, all_tags)))
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"解析DeepSeek转录分析结果失败: {str(e)}")
+            return None
+    
     def _chat_completion(self, messages: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
         """
         调用DeepSeek API执行聊天请求
@@ -209,4 +354,10 @@ class DeepSeekAnalyzer:
             
         except Exception as e:
             logger.error(f"调用DeepSeek API失败: {str(e)}")
-            return None 
+            return None
+    
+    def analyze_text(self, transcript: str, module: str = None) -> Dict[str, Any]:
+        """
+        兼容旧流程的分析方法，直接调用analyze_transcription_content
+        """
+        return self.analyze_transcription_content(transcript, module) 

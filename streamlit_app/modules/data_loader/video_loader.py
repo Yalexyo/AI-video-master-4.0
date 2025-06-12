@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
-from streamlit_app.config.config import get_config, get_paths_config
+from config.config import get_config, get_paths_config
 
 # 设置日志
 logger = logging.getLogger(__name__)

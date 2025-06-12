@@ -15,7 +15,7 @@ from pathlib import Path
 import os
 import requests
 
-from streamlit_app.config.config import get_config
+from config.config import get_config
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class SegmentAnalyzer:
             
             # 🔧 使用统一的prompt配置
             try:
-                from streamlit_app.utils.keyword_config import sync_prompt_templates, get_keyword_config
+                from utils.keyword_config import sync_prompt_templates, get_keyword_config
                 config = get_keyword_config()
                 
                 # 从配置文件获取产品类型和卖点

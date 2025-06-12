@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # 🚀 导入优化分析器
 try:
-    from streamlit_app.utils.factory.optimized_video_analysis import analyze_segments_with_high_efficiency
+    from utils.factory.optimized_video_analysis import analyze_segments_with_high_efficiency
 except ImportError:
     logger.warning("优化分析器不可用，将使用标准版本")
     analyze_segments_with_high_efficiency = None
@@ -39,7 +39,7 @@ def analyze_video_with_google_cloud(
         Dict: 分析结果
     """
     try:
-        from streamlit_app.modules.ai_analyzers import GoogleVideoAnalyzer
+        from modules.ai_analyzers import GoogleVideoAnalyzer
         
         analyzer = GoogleVideoAnalyzer()
         
@@ -152,7 +152,7 @@ def _analyze_segments_with_qwen_standard(
     🔄 标准版本的Qwen分析（保持原有逻辑）
     """
     try:
-        from streamlit_app.modules.ai_analyzers import QwenVideoAnalyzer
+        from modules.ai_analyzers import QwenVideoAnalyzer
         
         analyzer = QwenVideoAnalyzer()
         if not analyzer.is_available():
@@ -183,7 +183,7 @@ def _analyze_segments_with_qwen_standard(
                         'file_size': segment_file.stat().st_size / (1024*1024),
                         'model': 'Qwen2.5',
                         'object': analysis_result.get('object', '无'),
-                        'sence': analysis_result.get('sence', '无'),
+                        'scene': analysis_result.get('scene', '无'),
                         'emotion': analysis_result.get('emotion', '无'),
                         'brand_elements': analysis_result.get('brand_elements', '无'),
                         'confidence': analysis_result.get('confidence', 0.0),
@@ -366,7 +366,7 @@ def analyze_segments_with_deepseek(
                 'file_size': segment_file.stat().st_size / (1024*1024),
                 'model': 'DeepSeek-V3',
                 'object': mock_result.get('object', '商品展示'),
-                'sence': mock_result.get('sence', '室内场景'),
+                'scene': mock_result.get('scene', '室内场景'),
                 'emotion': mock_result.get('emotion', '积极'),
                 'brand_elements': mock_result.get('brand_elements', '品牌标识'),
                 'confidence': mock_result.get('confidence', 0.8),
@@ -397,7 +397,7 @@ def count_empty_tags(analysis_result: Dict[str, Any]) -> int:
         int: 空标签数量
     """
     empty_count = 0
-    check_fields = ['object', 'sence', 'emotion', 'brand_elements']
+    check_fields = ['object', 'scene', 'emotion', 'brand_elements']
     
     for field in check_fields:
         value = analysis_result.get(field, '')
@@ -430,7 +430,7 @@ def generate_mock_deepseek_result(segment_name: str) -> Dict[str, Any]:
     
     return {
         'object': objects[hash_int % len(objects)],
-        'sence': scenes[hash_int % len(scenes)],
+        'scene': scenes[hash_int % len(scenes)],
         'emotion': emotions[hash_int % len(emotions)],
         'brand_elements': brands[hash_int % len(brands)],
         'confidence': 0.75 + (hash_int % 25) / 100  # 0.75-0.99之间的置信度
@@ -608,7 +608,7 @@ def validate_analysis_dependencies() -> Dict[str, bool]:
     
     # 检查Google Cloud分析器
     try:
-        from streamlit_app.modules.ai_analyzers import GoogleVideoAnalyzer
+        from modules.ai_analyzers import GoogleVideoAnalyzer
         analyzer = GoogleVideoAnalyzer()
         has_creds, _ = analyzer.check_credentials()
         checks["google_cloud_available"] = has_creds
@@ -617,7 +617,7 @@ def validate_analysis_dependencies() -> Dict[str, bool]:
     
     # 检查Qwen分析器
     try:
-        from streamlit_app.modules.ai_analyzers import QwenVideoAnalyzer
+        from modules.ai_analyzers import QwenVideoAnalyzer
         analyzer = QwenVideoAnalyzer()
         checks["qwen_available"] = analyzer.is_available()
     except ImportError:

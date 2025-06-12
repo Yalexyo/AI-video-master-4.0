@@ -8,7 +8,7 @@ import json
 import copy
 from typing import Dict, List, Any
 
-from streamlit_app.config.config import (
+from config.config import (
     get_semantic_type_definitions, 
     DEFAULT_SEMANTIC_TYPE_DEFINITIONS,
     DEFAULT_SEMANTIC_SEGMENT_TYPES,

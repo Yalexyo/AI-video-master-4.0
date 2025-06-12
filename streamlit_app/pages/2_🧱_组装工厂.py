@@ -19,8 +19,8 @@ from typing import Dict, Any, List, Optional
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # 导入配置和模块
-from streamlit_app.config.factory_config import FactoryConfig
-from streamlit_app.modules.factory.assembly_components import (
+from config.factory_config import FactoryConfig
+from modules.factory.assembly_components import (
     render_video_upload_section,
     render_analysis_features,
     render_batch_analysis_settings,
@@ -31,10 +31,9 @@ from streamlit_app.modules.factory.assembly_components import (
     render_credentials_check,
     render_action_buttons,
     render_error_display,
-    render_model_selection,
-    render_prompt_configuration
+    render_model_selection
 )
-from streamlit_app.utils.factory.video_analysis_utils import (
+from utils.factory.video_analysis_utils import (
     analyze_video_with_google_cloud,
     create_video_segments,
     validate_analysis_dependencies,
@@ -43,7 +42,7 @@ from streamlit_app.utils.factory.video_analysis_utils import (
 )
 
 # 🚀 导入优化版本的分析函数
-from streamlit_app.utils.factory.optimized_video_analysis import analyze_segments_with_high_efficiency
+from utils.factory.optimized_video_analysis import analyze_segments_with_high_efficiency
 
 
 class AssemblyFactory:
@@ -102,11 +101,10 @@ class AssemblyFactory:
         st.markdown("---")
         
         # 功能选择标签页
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4 = st.tabs([
             "🎬 视频分析与切分", 
             "🧠 场景聚合",
             "🏷️ 智能标签工厂", 
-            "🤖 Prompt配置",
             "⚙️ 设置"
         ])
         
@@ -120,9 +118,6 @@ class AssemblyFactory:
             self._render_intelligent_labeling_tab()
         
         with tab4:
-            self._render_prompt_configuration_tab()
-        
-        with tab5:
             self._render_settings_tab()
     
     def _render_video_analysis_tab(self) -> None:
@@ -298,7 +293,7 @@ class AssemblyFactory:
         with col2:
             if st.button("验证Prompt配置", key="assembly_validate_prompt_config"):
                 try:
-                    from streamlit_app.utils.keyword_config import validate_config, get_config_summary
+                    from utils.keyword_config import validate_config, get_config_summary
                     
                     # 配置完整性验证
                     validation_results = validate_config()
@@ -549,7 +544,7 @@ class AssemblyFactory:
                         st.info(f"📄 **JSON文件已保存**: `{source_json_path}`")
                         
                         # 自动复制到video_pool目录
-                        from streamlit_app.utils.path_utils import get_video_pool_path
+                        from utils.path_utils import get_video_pool_path
                         video_pool_dir = get_video_pool_path()
                         video_pool_dir.mkdir(parents=True, exist_ok=True)
                         
@@ -682,28 +677,6 @@ class AssemblyFactory:
         except Exception as e:
             self.logger.error(f"创建视频片段失败: {e}")
             render_error_display(e, "创建视频片段")
-
-    def _render_prompt_configuration_tab(self) -> None:
-        """渲染Prompt配置标签页"""
-        st.header("🤖 Prompt配置管理")
-        
-        st.markdown("""
-        💡 **Prompt配置中心**：统一管理Qwen和DeepSeek模型的提示词配置
-        
-        **🎯 功能特点**：
-        - 📊 **关键词配置**：管理所有AI模型使用的基础词汇
-        - 👁️ **Qwen视觉Prompt**：配置视频画面分析的提示词模板  
-        - 🧠 **DeepSeek语音Prompt**：配置音频转录分析的提示词模板
-        - 🔄 **实时生效**：修改配置后即时应用到所有分析任务
-        
-        **🔧 最佳实践**：
-        - 所有配置统一存储在 `config/keywords.yml` 文件中
-        - 遵循单一数据源原则，避免配置分散
-        - 支持热重载，无需重启应用
-        """)
-        
-        # 渲染Prompt配置界面
-        render_prompt_configuration()
 
 
 def main():

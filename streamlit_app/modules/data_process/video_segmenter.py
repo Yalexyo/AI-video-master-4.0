@@ -9,10 +9,10 @@ import streamlit as st
 from moviepy.editor import VideoFileClip
 from datetime import datetime
 
-from streamlit_app.config.config import get_config, get_paths_config
-from streamlit_app.modules.data_loader.video_loader import find_target_video
+from config.config import get_config, get_paths_config
+from modules.data_loader.video_loader import find_target_video
 from src.core.utils.video_processor import VideoProcessor
-from streamlit_app.modules.analysis.intent_analyzer import SemanticAnalyzer
+from modules.analysis.intent_analyzer import SemanticAnalyzer
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ class VideoSegmenter:
         try:
             if use_new_analyzer:
                 # 使用新的DashScope语音分析器
-                from streamlit_app.modules.ai_analyzers import DashScopeAudioAnalyzer
+                from modules.ai_analyzers import DashScopeAudioAnalyzer
                 
                 analyzer = DashScopeAudioAnalyzer()
                 if not analyzer.is_available():
@@ -341,7 +341,7 @@ def _cached_video_processing_and_segmentation(video_path, file_mtime, file_size,
     # 尝试使用新的DashScope分析器
     transcript_json_path = None
     try:
-        from streamlit_app.modules.ai_analyzers import DashScopeAudioAnalyzer
+        from modules.ai_analyzers import DashScopeAudioAnalyzer
         
         analyzer = DashScopeAudioAnalyzer()
         if analyzer.is_available():

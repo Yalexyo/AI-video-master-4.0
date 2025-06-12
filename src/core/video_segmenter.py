@@ -767,22 +767,31 @@ class VideoSegmenter:
                 try:
                     video_duration = self._get_video_duration(video_path)
 
-                    # 短视频使用更高的帧率，长视频降低帧率
-                    if video_duration < 5:  # 小于5秒的超短片段
-                        current_frame_rate = 6.0  # 使用高帧率捕获更多细节
-                    elif video_duration < 10:  # 5-10秒的短片段
-                        current_frame_rate = 4.0  # 使用中高帧率
-                    elif video_duration < 30:  # 10-30秒的中等片段
-                        current_frame_rate = 3.0  # 使用中等帧率
-                    else:  # 30秒以上的长片段
-                        current_frame_rate = default_frame_rate  # 使用默认帧率
-
-                    logger.info(
-                        f"片段 {i+1} 长度: {video_duration:.2f} 秒，使用帧率: {current_frame_rate} 帧/秒")
+                    # 🎯 NEW: 获取文件大小进行额外优化
+                    try:
+                        file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+                    except:
+                        file_size_mb = 0
+                    
+                    # 🎯 过滤过小文件
+                    if file_size_mb < 0.5:
+                        logger.info(f"🚫 跳过过小视频文件: {file_size_mb:.2f}MB")
+                        continue
+                    
+                    # 🎯 优化的短视频帧率策略
+                    if file_size_mb < 1.0 or video_duration < 5:  # 短视频优化
+                        current_frame_rate = 5.0  # 使用高帧率捕获更多细节
+                        logger.info(f"⚡ 短视频优化: {file_size_mb:.2f}MB，{video_duration:.1f}秒，使用高帧率")
+                    elif video_duration < 10:  # 中等片段
+                        current_frame_rate = 3.0
+                        logger.info(f"📊 中等片段: {video_duration:.1f}秒，使用标准帧率")
+                    else:  # 长片段
+                        current_frame_rate = 2.0
+                        logger.info(f"🎬 长片段: {video_duration:.1f}秒，使用保守帧率")
+                        
                 except Exception as e:
-                    logger.error(f"获取视频时长失败: {str(e)}")
-                    current_frame_rate = default_frame_rate
-                    logger.info(f"使用默认帧率: {current_frame_rate} 帧/秒")
+                    logger.warning(f"无法获取视频时长，使用默认帧率: {e}")
+                    current_frame_rate = 2.0
 
                 # 使用自定义帧率分析视频
                 analysis = self.visual_analyzer.analyze_video_file(
@@ -954,18 +963,34 @@ class VideoSegmenter:
                 try:
                     video_duration = self._get_video_duration(video_path)
 
-                    # 短视频使用更高的帧率，长视频降低帧率
-                    if video_duration < 5:  # 小于5秒的超短片段
-                        current_frame_rate = 6.0  # 使用高帧率捕获更多细节
-                    elif video_duration < 10:  # 5-10秒的短片段
-                        current_frame_rate = 4.0  # 使用中高帧率
-                    elif video_duration < 30:  # 10-30秒的中等片段
-                        current_frame_rate = 3.0  # 使用中等帧率
-                    else:  # 30秒以上的长片段
-                        current_frame_rate = default_frame_rate  # 使用默认帧率
+                    # 🎯 NEW: 获取文件大小进行额外优化
+                    try:
+                        file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+                    except:
+                        file_size_mb = 0
+                    
+                    # 🎯 过滤过小文件
+                    if file_size_mb < 0.5:
+                        logger.info(f"🚫 跳过过小视频文件: {file_size_mb:.2f}MB")
+                        continue
+                    
+                    # 🎯 优化的短视频帧率策略
+                    if file_size_mb < 1.0 or video_duration < 5:  # 短视频优化
+                        current_frame_rate = 5.0  # 使用高帧率捕获更多细节
+                        logger.info(f"⚡ 短视频优化: {file_size_mb:.2f}MB，{video_duration:.1f}秒，使用高帧率")
+                    elif video_duration < 10:  # 中等片段
+                        current_frame_rate = 3.0
+                        logger.info(f"📊 中等片段: {video_duration:.1f}秒，使用标准帧率")
+                    else:  # 长片段
+                        current_frame_rate = 2.0
+                        logger.info(f"🎬 长片段: {video_duration:.1f}秒，使用保守帧率")
+                        
+                except Exception as e:
+                    logger.warning(f"无法获取视频时长，使用默认帧率: {e}")
+                    current_frame_rate = 2.0
 
                     logger.info(
-                        f"片段 {original_idx+1} 长度: {video_duration:.2f} 秒，使用帧率: {current_frame_rate} 帧/秒")
+                        f"片段 {original_idx+1} 长度: {video_duration:.2f}秒，文件: {file_size_mb:.2f}MB，帧率: {current_frame_rate:.1f}fps")
                     frame_rates.append(current_frame_rate)
                 except Exception as e:
                     logger.error(f"获取视频时长失败: {str(e)}")

@@ -19,8 +19,8 @@ from typing import Dict, Any
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # 导入配置和模块
-from streamlit_app.config.factory_config import FactoryConfig
-from streamlit_app.modules.factory.parts_components import (
+from config.factory_config import FactoryConfig
+from modules.factory.parts_components import (
     render_video_upload_section,
     render_video_info,
     render_output_settings,
@@ -30,7 +30,7 @@ from streamlit_app.modules.factory.parts_components import (
     render_error_display,
     render_dependencies_check
 )
-from streamlit_app.utils.factory.transcription_utils import (
+from utils.factory.transcription_utils import (
     convert_video_to_srt,
     validate_transcription_dependencies
 )

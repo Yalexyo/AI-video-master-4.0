@@ -6,6 +6,44 @@ cls
 echo 🏭 正在启动母婴视频智能工厂...
 echo ======================================
 
+REM 🔥 彻底终结所有相关进程
+echo 🔥 正在终结所有相关进程...
+echo    - 查找并终止 Streamlit 进程...
+
+REM 方法1: 通过进程名终止
+taskkill /f /im streamlit.exe >nul 2>&1
+if not errorlevel 1 (
+    echo    ✅ 已终止 streamlit.exe 进程
+) else (
+    echo    ℹ️  未发现 streamlit.exe 进程
+)
+
+REM 方法2: 通过进程名终止Python相关
+taskkill /f /im python.exe /fi "WINDOWTITLE eq streamlit*" >nul 2>&1
+taskkill /f /im pythonw.exe /fi "WINDOWTITLE eq streamlit*" >nul 2>&1
+
+REM 方法3: 通过端口终止
+for /L %%p in (8501,1,8510) do (
+    for /f "tokens=5" %%a in ('netstat -ano ^| find ":%%p "') do (
+        taskkill /f /pid %%a >nul 2>&1
+        if not errorlevel 1 echo    ✅ 已终止端口 %%p 上的进程 ^(PID: %%a^)
+    )
+)
+
+REM 等待进程完全终止
+ping 127.0.0.1 -n 3 >nul
+echo ✅ 进程清理完成
+
+REM 🧹 缓存清理
+echo 🧹 正在清理应用缓存...
+if exist "scripts\clear_cache.py" (
+    python scripts\clear_cache.py || echo ⚠️  缓存清理失败，继续启动
+    echo ✅ 缓存清理完成
+) else (
+    echo ⚠️  未找到缓存清理脚本，跳过
+)
+echo ======================================
+
 REM 获取脚本所在目录
 set "SCRIPT_DIR=%~dp0"
 echo 📁 项目目录: %SCRIPT_DIR%

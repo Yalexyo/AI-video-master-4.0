@@ -11,6 +11,14 @@
 """
 
 import streamlit as st
+
+# 🔧 修复：将页面配置移到最顶部，避免StreamlitSetPageConfigMustBeFirstCommandError
+st.set_page_config(
+    page_title="🧪 混剪工厂",
+    page_icon="🧪",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 import logging
 import sys
 from pathlib import Path
@@ -25,8 +33,8 @@ project_root = current_dir.parent.parent
 sys.path.insert(0, str(project_root))
 
 # 导入配置和模块
-from streamlit_app.config.mixing_config import MixingConfig
-from streamlit_app.modules.mixing.ui_components import (
+from config.mixing_config import MixingConfig
+from modules.mixing.ui_components import (
     render_quality_settings,
     render_strategy_selection,
     render_duration_ratio_config,
@@ -36,19 +44,19 @@ from streamlit_app.modules.mixing.ui_components import (
     display_srt_based_ratios,
     render_mapping_statistics
 )
-from streamlit_app.utils.mixing.srt_utils import (
+from utils.mixing.srt_utils import (
     calculate_srt_annotated_duration,
     get_marketing_hints,
     parse_srt_content
 )
 
 # 导入现有模块
-from streamlit_app.modules.mapper import VideoSegmentMapper, get_cached_mapping_results
-from streamlit_app.modules.composer import VideoComposer, create_output_filename, SelectionMode
+from modules.mapper import VideoSegmentMapper, get_cached_mapping_results
+from modules.composer import VideoComposer, create_output_filename, SelectionMode
 
 # 导入selection_logger模块
 try:
-    from streamlit_app.modules.selection_logger import start_new_session, get_selection_logger
+    from modules.selection_logger import start_new_session, get_selection_logger
 except ImportError:
     from modules.selection_logger import start_new_session, get_selection_logger
 
@@ -125,6 +133,52 @@ class MixingFactory:
         
         st.header("🎬 视频混剪工作流程")
         
+        # 缓存管理
+        st.markdown("---")
+        with st.expander("🛠️ 缓存与调试工具"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🔄 清除所有缓存并重新加载", help="点击此按钮将清除所有缓存数据（如片段映射结果），并刷新页面。当您更新了视频素材或修复了代码逻辑后，建议执行此操作。"):
+                    # 清理所有缓存
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                    
+                    # 🔧 核心修复：清理选片去重状态和日志实例
+                    from modules.selection_logger import close_current_session
+                    
+                    # 关闭当前的日志会话
+                    try:
+                        close_current_session()
+                    except Exception as e:
+                        self.logger.warning(f"关闭日志会话失败: {e}")
+                    
+                    # 清理会话状态中的数据
+                    keys_to_clear = [
+                        "mapped_segments", 
+                        "mapping_statistics", 
+                        "composition_result",
+                        "srt_entries",
+                        "srt_annotations",
+                        "pool_scanned",
+                        # 🔧 新增：清理选片去重相关状态
+                        "composition_used_segment_ids",
+                        "selection_logger_instance"
+                    ]
+                    for key in keys_to_clear:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    
+                    st.success("✅ 所有缓存和会话状态已清除！页面将自动重新加载。")
+                    # 强制重新运行以刷新状态
+                    st.rerun()
+            
+            with col2:
+                # 🆕 引导到调试工厂
+                if st.button("🔧 前往调试工厂", 
+                           help="前往调试工厂使用适配分类机制功能"):
+                    st.info("💡 **提示**: 请前往 🐛 调试工厂 → 选择调试模式 → 适配分类机制")
+
         # 🔧 检查并执行映射（如果需要）
         if has_video_pool_data and not st.session_state.get('mapped_segments'):
             self._execute_mapping(sidebar_config)
@@ -187,9 +241,12 @@ class MixingFactory:
                         st.session_state.srt_entries = srt_entries
                         st.session_state.benchmark_srt_file = str(srt_file)
                         
-                        # 初始化标注数据（如果不存在）
+                        # 🔧 初始化标注数据（如果不存在）并尝试加载已保存的标注
                         if not st.session_state.get('srt_annotations'):
                             st.session_state.srt_annotations = {}
+                        
+                        # 🔧 尝试加载已保存的标注文件
+                        self._load_existing_annotations(srt_file.stem)
                         
                         self.logger.info(f"✅ 成功加载标杆视频SRT文件: {srt_file.name} ({len(srt_entries)} 个条目)")
                     else:
@@ -204,7 +261,7 @@ class MixingFactory:
     def _execute_mapping(self, sidebar_config: Dict[str, Any]) -> None:
         """执行视频片段映射"""
         try:
-            from streamlit_app.modules.mapper import get_cached_mapping_results
+            from modules.mapper import get_cached_mapping_results
             
             video_pool_path = sidebar_config.get('video_pool_path')
             if video_pool_path:
@@ -265,6 +322,11 @@ class MixingFactory:
                         # 显示扫描结果
                         if st.session_state.get('srt_entries'):
                             st.success("✅ SRT文件扫描成功！")
+                            # 检查是否有标注被加载
+                            if st.session_state.get('srt_annotations'):
+                                annotations_count = sum(1 for ann in st.session_state.srt_annotations.values() if ann != "未标注")
+                                if annotations_count > 0:
+                                    st.info(f"📋 已自动加载 {annotations_count} 个已保存的标注")
                         else:
                             # 显示调试信息
                             st.error("❌ 未找到SRT文件")
@@ -422,7 +484,6 @@ class MixingFactory:
         with col3:
             if st.button("💾 保存标注", key="save_annotations"):
                 self._save_srt_annotations()
-                st.success("标注已保存")
         
         with col4:
             if st.button("📤 导出SRT", key="export_srt"):
@@ -485,15 +546,33 @@ class MixingFactory:
                 st.markdown("---")
     
     def _save_srt_annotations(self) -> None:
-        """保存SRT标注数据"""
+        """保存SRT标注数据到指定目录"""
         try:
-            annotations_dir = Path("data/annotations")
-            annotations_dir.mkdir(exist_ok=True)
+            # 🔧 修改保存路径到用户指定目录
+            target_dir = Path("/Users/sshlijy/Desktop/AI-video-master-4.0/data/input/test_videos")
+            
+            # 如果绝对路径不存在，尝试相对路径
+            if not target_dir.exists():
+                possible_paths = [
+                    Path("data/input/test_videos"),
+                    Path("../data/input/test_videos"),
+                    Path.cwd() / "data/input/test_videos",
+                    Path.cwd().parent / "data/input/test_videos"
+                ]
+                
+                for path in possible_paths:
+                    if path.exists():
+                        target_dir = path
+                        break
+                else:
+                    # 如果都不存在，创建相对路径
+                    target_dir = Path("data/input/test_videos")
+                    target_dir.mkdir(parents=True, exist_ok=True)
             
             benchmark_file = st.session_state.get('benchmark_srt_file', '')
             if benchmark_file:
                 base_name = Path(benchmark_file).stem
-                annotation_file = annotations_dir / f"{base_name}_annotations.json"
+                annotation_file = target_dir / f"{base_name}_annotations.json"
                 
                 annotation_data = {
                     "benchmark_file": benchmark_file,
@@ -506,10 +585,60 @@ class MixingFactory:
                     json.dump(annotation_data, f, ensure_ascii=False, indent=2)
                 
                 self.logger.info(f"标注数据已保存到: {annotation_file}")
+                st.success(f"✅ 标注已保存到: {annotation_file}")
         
         except Exception as e:
             self.logger.error(f"保存标注数据失败: {e}")
             st.error(f"保存失败: {e}")
+    
+    def _load_existing_annotations(self, base_name: str) -> None:
+        """加载已存在的标注文件"""
+        try:
+            # 查找标注文件的可能路径
+            possible_paths = [
+                Path("/Users/sshlijy/Desktop/AI-video-master-4.0/data/input/test_videos"),
+                Path("data/input/test_videos"),
+                Path("../data/input/test_videos"),
+                Path.cwd() / "data/input/test_videos",
+                Path.cwd().parent / "data/input/test_videos"
+            ]
+            
+            annotation_file = None
+            for path in possible_paths:
+                potential_file = path / f"{base_name}_annotations.json"
+                if potential_file.exists():
+                    annotation_file = potential_file
+                    break
+            
+            if annotation_file:
+                with open(annotation_file, 'r', encoding='utf-8') as f:
+                    annotation_data = json.load(f)
+                
+                # 加载标注数据到session_state
+                saved_annotations = annotation_data.get('annotations', {})
+                if saved_annotations:
+                    # 转换键为整数（JSON中键是字符串）
+                    converted_annotations = {}
+                    for key, value in saved_annotations.items():
+                        try:
+                            converted_annotations[int(key)] = value
+                        except ValueError:
+                            converted_annotations[key] = value
+                    
+                    st.session_state.srt_annotations = converted_annotations
+                    self.logger.info(f"✅ 成功加载已保存的标注: {annotation_file} ({len(saved_annotations)} 个标注)")
+                    
+                    # 在UI中显示加载成功信息
+                    if hasattr(st, 'session_state') and not st.session_state.get('annotation_load_shown'):
+                        st.info(f"📋 已加载保存的标注: {len(saved_annotations)} 个条目已标注")
+                        st.session_state.annotation_load_shown = True
+                else:
+                    self.logger.info(f"标注文件存在但无标注数据: {annotation_file}")
+            else:
+                self.logger.info(f"未找到现有标注文件: {base_name}_annotations.json")
+                
+        except Exception as e:
+            self.logger.error(f"加载标注文件失败: {e}")
     
     def _export_annotated_srt(self) -> None:
         """导出带标注的SRT文件"""
@@ -671,11 +800,20 @@ class MixingFactory:
                 # 创建composer实例
                 composer = VideoComposer()
                 
-                # 🔧 第一步：启动选片日志记录
+                # 🔧 第一步：初始化会话级别的状态管理
+                if 'composition_used_segment_ids' not in st.session_state:
+                    st.session_state.composition_used_segment_ids = set()
+                else:
+                    # 清空之前的记录，开始新的合成会话
+                    st.session_state.composition_used_segment_ids.clear()
+                
+                self.logger.info("🔧 初始化会话级别的片段去重集合")
+                
+                # 🔧 第二步：启动选片日志记录（使用session_state管理）
                 self.logger.info("启动选片决策日志记录...")
                 selection_logger = start_new_session()
                 
-                # 🔧 第二步：选择片段
+                # 🔧 第三步：选择片段
                 self.logger.info("第一步：根据策略选择片段...")
                 
                 if strategy == 'manual_annotation':
@@ -690,36 +828,25 @@ class MixingFactory:
                     # 算法优化模式：使用默认比例
                     ratios_list = [25, 25, 25, 25]
                 
-                # 选择片段
+                # 🔧 核心修复：传入会话级别的used_segment_ids集合，确保真正的全局去重
                 selection_result = composer.select_segments_by_duration(
                     mapped_segments=mapped_segments,
                     target_ratios=ratios_list,
-                    total_target_duration=target_duration
+                    total_target_duration=target_duration,
+                    used_segment_ids=st.session_state.composition_used_segment_ids
                 )
                 
                 if not selection_result.get("selected_segments"):
                     raise Exception("片段选择失败：没有找到合适的片段")
                 
-                # 🔧 记录模块选择结果到日志
-                for module_name, segments in selection_result.get("selected_segments", {}).items():
-                    if segments:
-                        selection_criteria = {
-                            "strategy": strategy,
-                            "target_duration": target_ratios.get(module_name, 0.25) * target_duration,
-                            "quality_threshold": 0.65
-                        }
-                        selection_logger.log_module_selection(
-                            module_name=module_name,
-                            candidates=mapped_segments,  # 所有候选片段
-                            selected_segments=segments,
-                            selection_criteria=selection_criteria
-                        )
+                # 🔧 选片记录已在composer.py中完成，无需重复记录
+                # 选片详细日志和去重验证已在select_segments_by_duration中处理
                 
                 # 🔧 第三步：合成视频
                 self.logger.info("第二步：合成视频...")
                 
                 # 生成输出文件名
-                from streamlit_app.modules.composer import create_output_filename
+                from modules.composer import create_output_filename
                 output_filename = create_output_filename("混剪工厂")
                 # 不需要重复添加路径前缀，create_output_filename已经包含完整路径
                 output_path = output_filename
@@ -770,16 +897,25 @@ class MixingFactory:
                     # 🔧 记录合成完成并关闭日志记录器
                     summary = selection_logger.get_session_summary()
                     self.logger.info(f"📋 选片日志会话总结: {summary}")
-                    selection_logger.close()
+                    # 🔧 使用统一的session_state关闭方式
+                    from modules.selection_logger import close_current_session
+                    close_current_session()
                 else:
                     st.error(f"❌ 视频合成失败: {result.get('error', '未知错误')}")
                     # 即使失败也要关闭日志记录器
-                    selection_logger.close()
+                    from modules.selection_logger import close_current_session
+                    close_current_session()
         
         except Exception as e:
             st.error(f"❌ 合成过程发生错误: {str(e)}")
             self.logger.error(f"合成失败: {str(e)}")
-            # 确保异常情况下也关闭日志记录器
+            # 🔧 确保异常情况下也关闭日志记录器（优先使用session_state中的实例）
+            try:
+                from modules.selection_logger import close_current_session
+                close_current_session()
+            except Exception as cleanup_error:
+                self.logger.warning(f"异常情况下关闭日志会话失败: {cleanup_error}")
+                # 备用方案：尝试关闭局部变量
             try:
                 if 'selection_logger' in locals():
                     selection_logger.close()
@@ -974,6 +1110,8 @@ class MixingFactory:
             self.logger.error(f"保存合成结果JSON失败: {e}")
             st.warning(f"⚠️ 保存合成详情失败: {e}")
 
+
+
     def _display_composition_result(self, result: Dict[str, Any]) -> None:
         """显示合成结果"""
         st.subheader("🎉 合成结果")
@@ -1032,16 +1170,7 @@ class MixingFactory:
 
 def main():
     """主函数"""
-    # 设置页面配置
-    config = MixingConfig()
-    st.set_page_config(
-        page_title=config.APP_NAME,
-        page_icon=config.PAGE_ICON,
-        layout=config.LAYOUT,
-        initial_sidebar_state="expanded"
-    )
-    
-    # 创建并运行混剪工厂
+    # 创建并运行混剪工厂（页面配置已在文件顶部设置）
     factory = MixingFactory()
     factory.render_main_page()
 

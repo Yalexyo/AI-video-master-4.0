@@ -181,7 +181,21 @@ class DashScopeAudioAnalyzer:
             logger.warning(f"📤 oss2库不可用，尝试替代方案: {e}")
             return self._fallback_upload_to_oss(audio_path)
         except Exception as e:
-            logger.error(f"📤 OSS上传失败: {str(e)}")
+            error_details = {
+                'error_type': type(e).__name__,
+                'error_message': str(e),
+                'traceback': getattr(e, '__traceback__', None)
+            }
+            
+            # 如果是OSS特定错误，提取更多信息
+            if hasattr(e, 'status'):
+                error_details['status'] = e.status
+            if hasattr(e, 'code'):
+                error_details['code'] = e.code
+            if hasattr(e, 'request_id'):
+                error_details['request_id'] = e.request_id
+                
+            logger.error(f"📤 OSS上传失败: {error_details}")
             return self._fallback_upload_to_oss(audio_path)
     
     def _fallback_upload_to_oss(self, audio_path: str) -> Optional[str]:
@@ -234,7 +248,20 @@ class DashScopeAudioAnalyzer:
             logger.error("📤 oss2库不可用，无法上传到OSS")
             return None
         except Exception as e:
-            logger.error(f"📤 oss2上传失败: {str(e)}")
+            error_details = {
+                'error_type': type(e).__name__,
+                'error_message': str(e)
+            }
+            
+            # 如果是OSS特定错误，提取更多信息
+            if hasattr(e, 'status'):
+                error_details['status'] = e.status
+            if hasattr(e, 'code'):
+                error_details['code'] = e.code
+            if hasattr(e, 'request_id'):
+                error_details['request_id'] = e.request_id
+                
+            logger.error(f"📤 oss2上传失败: {error_details}")
             return None
     
     def _call_dashscope_asr(
@@ -396,149 +423,322 @@ class DashScopeAudioAnalyzer:
                 "suggestions": suggestions
             }
     
-    def _parse_dashscope_result(self, output: Any) -> Dict[str, Any]:
+    def _parse_dashscope_result(self, result) -> Dict[str, Any]:
         """
-        解析DashScope录音文件识别结果
+        解析DashScope ASR结果，支持多种响应格式
         
         Args:
-            output: DashScope API返回的输出对象
+            result: DashScope API响应结果 (可能是字典或TranscriptionOutput对象)
             
         Returns:
-            包含转录文本和时间戳片段的字典
+            标准化的转录结果字典
         """
         try:
-            transcript_text = ""
+            # 记录原始结果用于调试
+            logger.debug(f"正在解析DashScope结果类型: {type(result)}")
+            
+            full_text = ""
+            srt_content = ""
             segments = []
             
-            if hasattr(output, 'results') and output.results:
-                logger.info(f"🎯 解析 {len(output.results)} 个识别结果")
-                
-                for result in output.results:
-                    if result.get('subtask_status') == 'SUCCEEDED':
-                        # 从转录URL下载详细结果
-                        transcription_url = result.get('transcription_url')
-                        if transcription_url:
-                            transcript_content = self._download_transcription_result(transcription_url)
-                            if transcript_content:
-                                transcript_text += transcript_content["text"]
-                                segments.extend(transcript_content.get("segments", []))
+            # 处理 TranscriptionOutput 对象
+            if hasattr(result, '__dict__'):
+                # 转换为字典以便统一处理
+                try:
+                    # 安全地检查 results 属性
+                    results = getattr(result, 'results', None)
+                    if results is not None:
+                        result_dict = {'results': results}
                         
-                        # 如果没有转录URL，尝试从直接结果中提取
-                        elif 'transcript' in result:
-                            transcript_text += result['transcript']
-                            # 尝试从其他字段提取时间戳信息
-                            if 'sentences' in result:
-                                for sentence in result['sentences']:
-                                    if 'text' in sentence:
-                                        segments.append({
-                                            "text": sentence['text'],
-                                            "start_time": sentence.get('begin_time', 0),
-                                            "end_time": sentence.get('end_time', 0)
-                                        })
+                        # 安全地添加其他可能的属性
+                        for attr in ['task_id', 'task_status', 'submit_time', 'scheduled_time', 'end_time', 'task_metrics', 'code', 'message']:
+                            try:
+                                value = getattr(result, attr, None)
+                                if value is not None:
+                                    result_dict[attr] = value
+                            except (KeyError, AttributeError) as e:
+                                # 忽略不存在的属性，避免 KeyError
+                                logger.debug(f"属性 {attr} 不存在或无法访问: {e}")
+                                continue
+                        
+                        logger.debug(f"转换TranscriptionOutput为字典: {list(result_dict.keys())}")
+                        result = result_dict
                     else:
-                        logger.warning(f"子任务失败: {result.get('subtask_status')}")
+                        # 如果没有 results 属性，尝试直接转换整个对象
+                        try:
+                            result = vars(result) if hasattr(result, '__dict__') else result
+                            logger.debug(f"直接转换对象属性: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+                        except Exception as e:
+                            logger.warning(f"无法直接转换对象: {e}")
+                except Exception as e:
+                    logger.error(f"处理TranscriptionOutput对象时发生错误: {e}")
+                    # 继续处理，可能是其他类型的对象
             
-            if not segments:
-                logger.error("❌ 无法从识别结果中提取任何时间戳信息")
-                raise ValueError("DashScope返回的识别结果中缺少时间戳信息，无法生成精确的SRT文件")
+            # 现在统一按字典格式处理
+            logger.debug(f"准备解析结果，类型: {type(result)}")
+            if isinstance(result, dict):
+                logger.debug(f"结果字段: {list(result.keys())}")
+                if 'results' in result:
+                    logger.debug(f"results字段存在，值: {result['results']}")
+                    logger.debug(f"results是否为真值: {bool(result['results'])}")
             
-            logger.info(f"✅ 成功解析识别结果: 文本长度={len(transcript_text)}, 有效片段数={len(segments)}")
+            # 格式1: DashScope录音文件识别 - 标准格式
+            if isinstance(result, dict) and 'results' in result and result['results']:
+                logger.debug(f"检测到DashScope results字段，task_status: {result.get('task_status', 'unknown')}")
+                
+                # 检查任务状态
+                task_status = result.get('task_status', '')
+                if task_status != 'SUCCEEDED':
+                    logger.warning(f"DashScope任务未成功完成，状态: {task_status}")
+                    return {
+                        "success": False,
+                        "error": f"DashScope任务状态: {task_status}",
+                        "transcript": "",
+                        "segments": [],
+                        "task_status": task_status
+                    }
+                
+                # 查找成功的子任务
+                results_list = result['results'] if isinstance(result['results'], list) else [result['results']]
+                for result_item in results_list:
+                    if not isinstance(result_item, dict):
+                        continue
+                        
+                    subtask_status = result_item.get('subtask_status', '')
+                    if subtask_status != 'SUCCEEDED':
+                        logger.debug(f"跳过失败的子任务，状态: {subtask_status}")
+                        continue
+                    
+                    transcription_url = result_item.get('transcription_url', '')
+                    if not transcription_url:
+                        logger.debug("子任务缺少transcription_url")
+                        continue
+                    
+                    logger.info(f"找到成功的转录结果URL: {transcription_url[:50]}...")
+                    
+                    # 下载并解析转录结果
+                    transcription_result = self._download_transcription_result(transcription_url)
+                    if transcription_result:
+                        return transcription_result
+                    else:
+                        logger.warning("转录结果下载失败，返回基本信息")
+                        return {
+                            "success": True,
+                            "transcript": "转录结果下载失败",
+                            "srt_content": "",
+                            "segments": [],
+                            "has_timestamps": False,
+                            "transcription_url": transcription_url,
+                            "note": "转录结果文件下载失败"
+                        }
+                
+                # 如果没有找到成功的子任务
+                logger.error("所有DashScope子任务都失败了")
+                return {
+                    "success": False,
+                    "error": "所有子任务都失败",
+                    "transcript": "",
+                    "segments": []
+                }
             
+            # 格式3: 直接在顶级的text字段 (老版本)
+            if isinstance(result, dict) and 'text' in result:
+                full_text = result['text']
+                if full_text and full_text.strip():
+                    logger.warning("DashScope结果为旧版格式，缺少时间戳，只返回纯文本")
+                    return {
+                        "success": True,
+                        "transcript": full_text.strip(),
+                        "srt_content": "",
+                        "segments": [],
+                        "has_timestamps": False
+                    }
+            
+            # 格式4: 检查是否是空音频导致的空结果
+            if not result or (isinstance(result, dict) and not any(result.values())):
+                logger.warning("DashScope返回空结果，可能是音频无语音内容")
+                return {
+                    "success": True,
+                    "transcript": "",
+                    "srt_content": "",
+                    "segments": [],
+                    "has_timestamps": False,
+                    "note": "音频无语音内容或静音"
+                }
+            
+            # 格式5: 其他可能的格式尝试
+            if isinstance(result, dict):
+                # 尝试查找任何可能包含文本的字段
+                possible_text_fields = ['transcript', 'text', 'content', 'result']
+                for field in possible_text_fields:
+                    if field in result and result[field]:
+                        text_value = result[field]
+                        if isinstance(text_value, str) and text_value.strip():
+                            logger.warning(f"DashScope使用备用字段'{field}'解析文本")
+                            return {
+                                "success": True,
+                                "transcript": text_value.strip(),
+                                "srt_content": "",
+                                "segments": [],
+                                "has_timestamps": False
+                            }
+            
+            # 所有格式都无法识别
+            if isinstance(result, dict):
+                keys_info = list(result.keys())
+            else:
+                keys_info = [attr for attr in dir(result) if not attr.startswith('_')] if hasattr(result, '__dict__') else str(type(result))
+            
+            logger.error(f"无法识别的DashScope结果格式，原始结果结构: {keys_info}")
             return {
-                "success": True,
-                "transcript": transcript_text,
-                "segments": segments,
-                "raw_result": output,
-                "hotword_mode": "dashscope_api"
+                "success": False,
+                "error": f"无法识别的DashScope结果格式: {type(result)}",
+                "transcript": "",
+                "segments": [],
+                "raw_result_type": str(type(result)),
+                "raw_result_keys": keys_info
             }
             
         except Exception as e:
-            logger.error(f"解析DashScope结果失败: {str(e)}")
-            raise ValueError(f"解析DashScope转录结果失败: {str(e)}")
-    
+            logger.error(f"解析DashScope结果时发生未知错误: {e}")
+            import traceback
+            logger.error(f"详细错误堆栈:\n{traceback.format_exc()}")
+            
+            return {
+                "success": False,
+                "error": f"解析DashScope转录结果失败: {str(e)}",
+                "transcript": "",
+                "segments": [],
+                "exception_details": str(e)
+            }
+
     def _download_transcription_result(self, transcription_url: str) -> Optional[Dict[str, Any]]:
         """
-        下载转录结果，包含精确的时间戳信息
+        下载并解析DashScope转录结果文件
         
         Args:
-            transcription_url: 转录结果URL
+            transcription_url: 转录结果JSON文件的URL
             
         Returns:
-            包含转录文本和时间戳的字典，失败时返回None
+            解析后的转录结果或None
         """
         try:
             import requests
-            import json
             
-            logger.info(f"📥 下载转录结果: {transcription_url}")
+            logger.info(f"📥 开始下载转录结果: {transcription_url[:50]}...")
             
+            # 下载JSON文件
             response = requests.get(transcription_url, timeout=30)
             response.raise_for_status()
             
-            # 解析JSON结果
-            result_data = response.json()
+            # 解析JSON内容
+            transcription_data = response.json()
+            logger.info(f"转录结果JSON结构: {list(transcription_data.keys())}")
             
-            transcript_text = ""
+            # 输出完整的JSON数据以便调试
+            logger.info(f"完整转录结果: {transcription_data}")
+            
+            # 按照官方文档格式解析
+            if 'transcripts' not in transcription_data:
+                logger.error("转录结果格式错误：缺少transcripts字段")
+                return None
+            
+            full_text = ""
+            srt_content = ""
             segments = []
             
-            if 'transcripts' in result_data:
-                for transcript in result_data['transcripts']:
-                    if 'text' in transcript:
-                        transcript_text += transcript['text']
-            
-                    # 🎯 提取句子级别时间戳信息
-                    if 'sentences' in transcript:
-                        for sentence in transcript['sentences']:
-                            if 'text' in sentence and 'begin_time' in sentence and 'end_time' in sentence:
-                                segments.append({
-                                    "text": sentence['text'],
-                                    "start_time": sentence['begin_time'],  # 毫秒
-                                    "end_time": sentence['end_time']       # 毫秒
-                                })
-                    
-                    # 🎯 如果没有句子级别时间戳，尝试从词级别重建
-                    elif 'words' in transcript:
-                        logger.info("🔧 从词级别时间戳重建句子时间戳")
-                        current_sentence = ""
-                        start_time = None
+            for transcript in transcription_data['transcripts']:
+                if 'sentences' in transcript and transcript['sentences']:
+                    logger.info(f"处理转录包含 {len(transcript['sentences'])} 个句子")
+                    for i, sentence in enumerate(transcript['sentences'], 1):
+                        start_ms = sentence.get('begin_time', 0)
+                        end_ms = sentence.get('end_time', 0)
+                        text = sentence.get('text', '')
                         
-                        for word_info in transcript['words']:
-                            if 'word' in word_info and 'begin_time' in word_info:
-                                if start_time is None:
-                                    start_time = word_info['begin_time']
-                                
-                                current_sentence += word_info['word']
-                                
-                                # 简单的句子分割（遇到句号、问号、感叹号）
-                                if any(punct in word_info['word'] for punct in ['。', '？', '！', '.', '?', '!']):
-                                    if current_sentence.strip():
-                                        segments.append({
-                                            "text": current_sentence.strip(),
-                                            "start_time": start_time,
-                                            "end_time": word_info.get('end_time', start_time + 3000)
-                                        })
-                                    current_sentence = ""
-                                    start_time = None
+                        logger.info(f"句子 {i}: 原始时间戳 start={start_ms} ({type(start_ms)}), end={end_ms} ({type(end_ms)})")
+                        logger.info(f"句子 {i}: 文本={text[:50]}...")
                         
-                        # 处理最后一个句子
-                        if current_sentence.strip() and start_time is not None:
+                        # 确保时间戳是整数类型
+                        start_ms = int(float(start_ms)) if start_ms else 0
+                        end_ms = int(float(end_ms)) if end_ms else 0
+                        
+                        logger.info(f"句子 {i}: 转换后时间戳 start={start_ms}ms, end={end_ms}ms")
+                        
+                        if text and text.strip():
+                            full_text += text + " "
+                            start_time = self._format_timestamp(start_ms)
+                            end_time = self._format_timestamp(end_ms)
+                            logger.info(f"句子 {i}: 格式化时间戳 {start_time} --> {end_time}")
+                            srt_content += f"{i}\n{start_time} --> {end_time}\n{text}\n\n"
+                            
                             segments.append({
-                                "text": current_sentence.strip(),
-                                "start_time": start_time,
-                                "end_time": start_time + 3000  # 默认3秒
+                                "start": start_ms / 1000.0,
+                                "end": end_ms / 1000.0,
+                                "text": text.strip()
                             })
+                
+                # 如果没有sentences，尝试使用text字段
+                elif 'text' in transcript:
+                    full_text = transcript['text']
             
-            logger.info(f"🎯 下载完成: 文本长度={len(transcript_text)}, 片段数={len(segments)}")
-            
-            return {
-                "text": transcript_text,
-                "segments": segments,
-                "raw_data": result_data
-            }
-            
-        except Exception as e:
-            logger.error(f"下载转录结果失败: {str(e)}")
+            if segments:
+                logger.info(f"✅ 成功解析转录结果: {len(segments)}个片段, {len(full_text.strip())}字符")
+                return {
+                    "success": True,
+                    "transcript": full_text.strip(),
+                    "srt_content": srt_content.strip(),
+                    "segments": segments,
+                    "has_timestamps": True
+                }
+            elif full_text.strip():
+                logger.warning("⚠️ 转录结果无时间戳，仅返回文本")
+                return {
+                    "success": True,
+                    "transcript": full_text.strip(),
+                    "srt_content": "",
+                    "segments": [],
+                    "has_timestamps": False
+                }
+            else:
+                logger.warning("⚠️ 转录结果为空")
+                return {
+                    "success": True,
+                    "transcript": "",
+                    "srt_content": "",
+                    "segments": [],
+                    "has_timestamps": False,
+                    "note": "音频无语音内容"
+                }
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ 下载转录结果失败: {e}")
             return None
+        except Exception as e:
+            logger.error(f"❌ 解析转录结果失败: {e}")
+            import traceback
+            logger.error(f"详细错误: {traceback.format_exc()}")
+            return None
+
+    def _format_timestamp(self, milliseconds) -> str:
+        """
+        将毫秒转换为格式化的时间戳
+        
+        Args:
+            milliseconds: 毫秒数（int或float）
+            
+        Returns:
+            格式化的时间戳
+        """
+        # 确保输入是数字类型并转换为整数
+        ms = int(float(milliseconds)) if milliseconds else 0
+        
+        seconds = ms // 1000
+        minutes = seconds // 60
+        hours = minutes // 60
+        seconds = seconds % 60
+        ms_remainder = ms % 1000
+        
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{ms_remainder:03d}"
     
     def transcribe_video(
         self,

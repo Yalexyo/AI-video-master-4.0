@@ -9,11 +9,11 @@ from typing import Dict, List, Any
 from pathlib import Path
 
 # 导入配置和工具
-from streamlit_app.config.mixing_config import MixingConfig
-from streamlit_app.utils.mixing.srt_utils import (
+from config.mixing_config import MixingConfig
+from utils.mixing.srt_utils import (
     calculate_srt_annotated_duration
 )
-from streamlit_app.utils.path_utils import get_video_pool_path, ensure_path_exists, get_google_video_path, get_output_path
+from utils.path_utils import get_video_pool_path, ensure_path_exists, get_google_video_path, get_output_path
 
 
 def render_quality_settings() -> Dict[str, Any]:
@@ -360,7 +360,7 @@ def display_srt_based_ratios(srt_entries: List[Dict], srt_annotations: Dict) -> 
             if 'start_time' in entry and 'end_time' in entry:
                 duration = entry['end_time'] - entry['start_time']
             else:
-                from streamlit_app.utils.mixing.srt_utils import parse_srt_timestamp_duration
+                from utils.mixing.srt_utils import parse_srt_timestamp_duration
                 timestamp = entry.get('timestamp', '')
                 duration = parse_srt_timestamp_duration(timestamp)
             

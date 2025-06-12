@@ -3,21 +3,88 @@
 用于将video_pool中的视频片段自动映射到四大模块：痛点、解决方案导入、卖点·成分&配方、促销机制
 """
 
-import os
+import logging
 import json
+import os
+import re
 import glob
 import subprocess
-import logging
-from typing import List, Dict, Any, Optional
-import streamlit as st
+from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 import threading
 import time
+import streamlit as st
+
+from modules.selection_logger import get_selection_logger
+# from .quality_analyzer import QualityAnalyzer  # 暂时注释掉，文件不存在
+# from .ai_analyzers.analyzer_factory import AnalyzerFactory  # 暂时注释掉，文件不存在
+# from .data_models import Segment, MappedSegment, VideoAnalysisResult, SceneInfo  # 暂时注释掉，文件不存在
+from utils.config_manager import get_config_manager
+from utils.path_utils import get_project_root
+from modules.ai_analyzers import DeepSeekAnalyzer
 
 logger = logging.getLogger(__name__)
 
+def resolve_video_pool_path(relative_path: str = "data/output/google_video/video_pool") -> str:
+    """
+    🔧 跨平台兼容的video_pool路径解析
+    
+    解决streamlit_app工作目录下相对路径找不到../data的问题
+    
+    Args:
+        relative_path: 相对路径，默认为data/output/google_video/video_pool
+        
+    Returns:
+        str: 解析后的绝对路径
+    """
+    # 方案1：尝试当前工作目录下的相对路径
+    if os.path.exists(relative_path):
+        abs_path = os.path.abspath(relative_path)
+        logger.debug(f"✅ 路径解析成功(当前目录): {relative_path} -> {abs_path}")
+        return abs_path
+    
+    # 方案2：尝试上级目录下的相对路径（适用于streamlit_app工作目录）
+    parent_relative_path = os.path.join("..", relative_path)
+    if os.path.exists(parent_relative_path):
+        abs_path = os.path.abspath(parent_relative_path)
+        logger.debug(f"✅ 路径解析成功(上级目录): {parent_relative_path} -> {abs_path}")
+        return abs_path
+    
+    # 方案3：使用项目根目录拼接
+    try:
+        project_root = get_project_root()
+        project_based_path = os.path.join(project_root, relative_path)
+        if os.path.exists(project_based_path):
+            logger.debug(f"✅ 路径解析成功(项目根目录): {project_based_path}")
+            return project_based_path
+    except Exception as e:
+        logger.debug(f"项目根目录方法失败: {e}")
+    
+    # 方案4：基于当前文件位置推断
+    current_file_dir = os.path.dirname(os.path.abspath(__file__))
+    # 当前文件在 streamlit_app/modules/mapper.py
+    # 需要跳到项目根目录: ../../data/output/google_video/video_pool
+    inferred_path = os.path.join(current_file_dir, "..", "..", relative_path)
+    if os.path.exists(inferred_path):
+        abs_path = os.path.abspath(inferred_path)
+        logger.debug(f"✅ 路径解析成功(推断路径): {inferred_path} -> {abs_path}")
+        return abs_path
+    
+    # 所有方案都失败，返回原始路径并记录警告
+    logger.warning(f"⚠️ 无法解析video_pool路径，所有尝试的路径都不存在:")
+    logger.warning(f"   1. {os.path.abspath(relative_path)}")
+    logger.warning(f"   2. {os.path.abspath(parent_relative_path)}")
+    if 'project_based_path' in locals():
+        logger.warning(f"   3. {project_based_path}")
+    logger.warning(f"   4. {os.path.abspath(inferred_path)}")
+    logger.warning(f"   当前工作目录: {os.getcwd()}")
+    
+    return os.path.abspath(relative_path)  # 返回绝对路径，即使不存在
+
 class VideoSegmentMapper:
-    """视频片段映射器"""
+    """
+    视频片段映射器，负责将AI分析的标签映射到业务模块。
+    """
     
     def __init__(self):
         """初始化映射器"""
@@ -25,7 +92,6 @@ class VideoSegmentMapper:
         
         # 🔧 初始化DeepSeek分析器
         try:
-            from streamlit_app.modules.ai_analyzers import DeepSeekAnalyzer
             self.deepseek_analyzer = DeepSeekAnalyzer()
             logger.info("DeepSeek分析器初始化完成")
         except ImportError as e:
@@ -35,47 +101,100 @@ class VideoSegmentMapper:
             logger.error(f"DeepSeek分析器初始化失败: {e}")
             self.deepseek_analyzer = None
         
-        # 🔧 使用统一配置文件加载关键词规则
+        # 🔧 使用统一配置中心加载规则
         try:
-            from streamlit_app.utils.keyword_config import get_mapper_keywords, get_pain_point_rules
+            config_manager = get_config_manager()
+            self.keyword_rules = config_manager.get_matching_rules()
             
-            # 从配置文件加载关键词映射
-            self.keyword_rules = get_mapper_keywords()
-            
-            # 从配置文件加载痛点专用规则
-            self.pain_point_rules = get_pain_point_rules()
-            
-            logger.info("🎯 映射器配置加载成功，使用统一关键词配置文件")
+            # 从原始配置中提取痛点规则和品牌关键词用于特殊处理（如果需要的话）
+            # 注意：大部分逻辑应直接使用 get_matching_rules() 的结果
+            raw_config = config_manager.get_raw_config()
+            self.pain_point_rules = raw_config.get("pain_points", {}) # 示例，可能不再需要
+            self.brand_priority_keywords = raw_config.get("features_formula", {}).get("brands", [])
+
+            logger.info("🎯 映射器配置加载成功，使用统一配置中心")
             logger.info(f"   模块数量: {len(self.keyword_rules)}")
-            logger.info(f"   痛点规则: {len(self.pain_point_rules)}")
             
-        except ImportError:
-            logger.warning("无法导入关键词配置，使用默认映射规则")
+        except Exception as e:
+            logger.error(f"无法从配置中心加载规则，将使用默认兜底配置: {e}")
             # 兜底配置
             self.keyword_rules = {
-                "痛点": ["医院", "哭闹", "发烧"],
-                "解决方案导入": ["冲奶", "奶粉罐", "奶瓶"],
-                "卖点·成分&配方": ["A2", "HMO", "DHA", "启赋"],
-                "促销机制": ["优惠", "限时", "促销"]
+                "痛点": {"core_identity": ["医院", "哭闹", "发烧"]},
+                "解决方案导入": {"core_identity": ["冲奶", "奶粉罐", "奶瓶"]},
+                "卖点·成分&配方": {"core_identity": ["A2", "HMO", "DHA", "启赋"]},
+                "促销机制": {"core_identity": ["优惠", "限时", "促销"]}
             }
-            self.pain_point_rules = {
-                "baby_presence": ["宝宝", "婴儿"],
-                "negative_emotions": ["哭", "痛苦", "焦虑"],
-                "visual_signals": ["宝宝哭", "医院"]
-            }
-        
-        # 🔧 特殊处理：品牌优先级关键词（从配置文件获取）
-        try:
-            from streamlit_app.utils.keyword_config import get_brands
-            self.brand_priority_keywords = get_brands()
-        except ImportError:
+            self.pain_point_rules = {}
             self.brand_priority_keywords = ["启赋", "illuma", "Wyeth", "A2", "ATWO", "HMO", "DHA"]
         
         # 🔧 Intentionally disable embedding models
         logger.info("EMBEDDING MODELS ARE DISABLED. Classification will rely on keywords and DeepSeek API.")
         self.embedding_model = None
-        self.fallback_model = None # Though fallback_model was part of embedding, set to None for clarity
         self.embedding_util = None
+    
+        # 🔧 【已彻底移除】不再需要手动加载matching_rules.json，完全依赖ConfigManager
+        # 确保rules属性存在，用于向后兼容性
+        if not hasattr(self, 'keyword_rules') or not self.keyword_rules:
+            logger.error("ConfigManager未能提供任何规则，将使用一个空的默认配置。")
+            self.keyword_rules = self._create_default_rules()
+        
+        # 为向后兼容，同时设置rules属性
+        self.rules = self.keyword_rules
+                
+    def _load_matching_rules(self):
+        """
+        【已废弃】此方法不再使用。所有规则均由ConfigManager统一提供。
+        """
+        logger.warning("调用了已废弃的_load_matching_rules方法，此方法不应再被使用。")
+        self.rules = self._create_default_rules()
+    
+    def _create_default_rules(self) -> dict:
+        """
+        创建默认的规则配置（作为fallback）
+        
+        Returns:
+            默认配置字典
+        """
+        return {
+            "痛点": {
+                "object_keywords": ["宝宝", "婴儿", "新生儿"],
+                "scene_keywords": ["哭闹", "不安", "难受"],
+                "emotion_keywords": ["焦虑", "担心", "困扰"],
+                "negative_keywords": ["开心", "快乐", "满意"],
+                "required_keywords": [],
+                "min_score_threshold": 0.3
+            },
+            "卖点·成分&配方": {
+                "object_keywords": ["奶粉", "配方", "营养"],
+                "scene_keywords": ["产品", "展示", "介绍"],
+                "emotion_keywords": ["专业", "科学", "安全"],
+                "negative_keywords": ["哭闹", "问题", "难受"],
+                "required_keywords": [],
+                "min_score_threshold": 0.3
+            },
+            "解决方案导入": {
+                "object_keywords": ["建议", "方法", "解决"],
+                "scene_keywords": ["指导", "教学", "演示"],
+                "emotion_keywords": ["专业", "信任", "安心"],
+                "negative_keywords": ["产品", "推销", "广告"],
+                "required_keywords": [],
+                "min_score_threshold": 0.3
+            },
+            "促销机制": {
+                "object_keywords": ["宝宝", "婴儿", "孩子"],
+                "scene_keywords": ["开心", "活力", "健康"],
+                "emotion_keywords": ["快乐", "满意", "成长"],
+                "negative_keywords": ["哭闹", "问题", "担心"],
+                "required_keywords": [],
+                "min_score_threshold": 0.3
+            },
+            "GLOBAL_SETTINGS": {
+                "global_exclusion_keywords": ["疑似", "模糊", "不清楚"],
+                "irrelevant_scene_categories": {
+                    "无关场景": ["广告", "logo", "文字"]
+                }
+            }
+        }
     
     def _init_embedding_model_offline(self):
         """离线模式下初始化embedding模型（增强版）"""
@@ -229,143 +348,97 @@ class VideoSegmentMapper:
     
     def classify_segment_by_tags(self, all_tags: List[str]) -> str:
         """
-        基于简化5情绪+关键词的高精度分类
-        
-        Args:
-            all_tags: 片段的所有标签列表
-            
-        Returns:
-            str: 分类结果，如果无法分类返回None
+        使用权重累加机制，根据ai_batch配置对片段进行分类，归属得分最高的模块（严格排除负向关键词）。
+        增加全局排除逻辑。
         """
-        if not all_tags:
-            logger.debug("classify_segment_by_tags: 标签列表为空，返回None")
+        # 🔧 过滤None值，确保类型安全
+        all_tags = [tag for tag in all_tags if tag is not None and isinstance(tag, str)]
+        
+        # 0. 全局排除检查 (最高优先级)
+        config_manager = get_config_manager()
+        global_exclusion_keywords = config_manager.get_global_exclusion_keywords()
+        if global_exclusion_keywords:
+            # 将所有标签和关键词转为小写以进行不区分大小写的比较
+            lower_all_tags = {tag.lower() for tag in all_tags if tag}  # 额外过滤空字符串
+            lower_global_exclusion_keywords = {kw.lower() for kw in global_exclusion_keywords if kw}
+            
+            # 查找交集
+            intersection = lower_all_tags.intersection(lower_global_exclusion_keywords)
+            if intersection:
+                logger.info(f"🚫 片段因包含全局排除关键词被过滤: {intersection}")
+                return None # 直接返回None，不进行任何分类
+
+        # 1. 加载原始配置，获取各模块ai_batch权重词表
+        try:
+            raw_config = config_manager.get_raw_config()
+        except Exception as e:
+            logger.error(f"无法加载配置，使用原有逻辑: {e}")
             return None
             
-        tags_text = " ".join(all_tags).lower()
-        logger.debug(f"classify_segment_by_tags: 待分类标签文本: '{tags_text}'")
-        
-        # 🚫 第零优先级：检查全局排除关键词和负面关键词过滤
-        if self._is_excluded_by_negative_keywords(tags_text):
-            logger.warning(f"🚫 片段被排除关键词过滤: '{tags_text}'")
-            return None
-        
-        # 🎯 第一优先级：基于5个固定情绪进行分类
-        if "痛苦" in tags_text or "焦虑" in tags_text:
-            logger.info(f"🎯 痛苦/焦虑情绪匹配 -> 痛点")
-            return "痛点"
-        
-        if "快乐" in tags_text or "兴奋" in tags_text:
-            logger.info(f"🎯 快乐/兴奋情绪匹配 -> 促销机制")
-            return "促销机制"
-        
-        # 🎯 第二优先级：痛点场景直接识别
-        try:
-            from streamlit_app.utils.keyword_config import get_pain_point_rules
-            pain_rules = get_pain_point_rules()
-            pain_signals = pain_rules.get("visual_signals", [])
-        except ImportError:
-            pain_signals = [
-                "宝宝哭", "输液管", "医院", "病床", "发烧", "夜醒", "父母焦虑",
-                "哭闹", "拉肚子", "生病", "医院场景"
-            ]
-        
-        for signal in pain_signals:
-            if signal in tags_text:
-                logger.info(f"🎯 痛点场景信号匹配: '{signal}' -> 痛点")
-                return "痛点"
-        
-        # 🎯 第三优先级：活力促销场景识别（🔧 新策略：只认欢乐活力镜头）
-        try:
-            from streamlit_app.utils.keyword_config import get_promotion_vitality_keywords
-            vitality_keywords = get_promotion_vitality_keywords()  # 🔧 使用新的活力关键词
-        except ImportError:
-            vitality_keywords = [
-                "宝宝喝奶粉开心", "喝奶粉开心", "宝宝玩耍开心", "宝宝奔跑", "宝宝跳跃",
-                "户外玩耍", "公园", "游乐场", "滑梯", "蹦床", "大笑", "欢乐", "活力"
-            ]
-        
-        # 🎯 新纲领：只认欢乐活力镜头，不需文字CTA
-        for keyword in vitality_keywords:
-            if keyword in tags_text:
-                logger.info(f"🎯 活力欢乐信号匹配: '{keyword}' -> 促销机制")
-                return "促销机制"
-        
-        # 🎯 第四优先级：品牌卖点识别
-        try:
-            from streamlit_app.utils.keyword_config import get_brands
-            brands = get_brands()
-            brand_signals = [brand.lower() for brand in brands] + [
-                "营养表", "营养成分", "分子结构", "品牌logo"
-            ]
-        except ImportError:
-            brand_signals = [
-                "启赋", "wyeth", "illuma", "a2", "atwo", "hmo", "dha",
-                "营养表", "营养成分", "分子结构", "品牌logo"
-            ]
-        
-        for signal in brand_signals:
-            if signal in tags_text:
-                logger.info(f"🎯 品牌卖点信号匹配: '{signal}' -> 卖点·成分&配方")
-                return "卖点·成分&配方"
-        
-        # 🎯 第五优先级：解决方案场景识别（扩展关键词）
-        solution_signals = [
-            # 🔧 核心特征：妈妈说教场景
-            "妈妈", "母亲", "长辈", "奶奶", "婆婆", "专家", "医生",
-            "说话", "讲解", "指导", "教导", "传授", "分享", "告诉",
-            "经验", "建议", "提醒", "叮嘱", "关怀", "呵护",
-            
-            # 🔧 教学场景特征
-            "教学", "教程", "演示", "示范", "指导视频", "经验分享",
-            "知识", "方法", "技巧", "窍门", "注意事项", "小贴士",
-            "正确方法", "使用方法", "如何", "怎么", "步骤",
-            
-            # 🔧 产品使用场景（保留重要的）
-            "冲奶", "冲调", "调配", "配制", "奶粉罐", "奶瓶", "勺子",
-            "准备奶粉", "操作演示", "产品演示", "台面操作",
-            
-            # 🔧 关爱互动场景
-            "耐心", "细心", "温柔", "关爱", "母爱", "亲情",
-            "对话", "交流", "沟通", "解答", "回应",
-            
-            # 🔧 场景环境（妈妈说教常见场景）
-            "客厅", "沙发", "餐桌", "厨房", "家庭", "居家",
-            "面对面", "坐着", "聊天", "谈话"
+        modules = [
+            ("pain_points", "痛点"),
+            ("solutions", "解决方案导入"),
+            ("features_formula", "卖点·成分&配方"),
+            ("promotions", "促销机制")
         ]
-        
-        for signal in solution_signals:
-            if signal in tags_text:
-                logger.info(f"🎯 解决方案信号匹配: '{signal}' -> 解决方案导入")
-                return "解决方案导入"
-        
-        # 🔧 增强兜底规则：温馨 + 产品相关 = 解决方案
-        if "温馨" in tags_text:
-            # 检查是否有产品相关元素
-            product_related = ["奶粉", "奶瓶", "喂养", "冲调", "产品", "包装"]
-            has_product = any(prod in tags_text for prod in product_related)
-            if has_product:
-                logger.info("🎯 温馨+产品场景匹配 -> 解决方案导入")
-                return "解决方案导入"
-            else:
-                logger.info("🎯 纯温馨情绪，无产品元素 -> 跳过")
-        
-        # 🔧 保留原有的痛点组合判断作为兜底
-        if self._is_pain_point_by_combination(all_tags):
-            logger.info(f"🎯 痛点组合规则匹配 -> 痛点")
-            return "痛点"
-        
-        # 🔧 保留原有的关键词规则作为最后兜底
-        for module, keywords in self.keyword_rules.items():
-            if module == "痛点":  # 痛点已经通过上面的逻辑处理
+        tag_text = " ".join(all_tags).lower()
+        module_scores = {}
+        excluded_modules = set()
+
+        # 2. 先执行全局排除（负向关键词）- 支持模块级和全局级排除
+        global_overrides = raw_config.get("global_settings", {}).get("overrides", {})
+        for key, module_name in modules:
+            # 检查全局overrides排除
+            negatives_key = f"{key}_negatives"
+            negatives = global_overrides.get(negatives_key, [])
+            for neg in negatives:
+                if neg and isinstance(neg, str) and neg.lower() in tag_text:
+                    excluded_modules.add(module_name)
+                    logger.debug(f"模块 {module_name} 被全局排除词 '{neg}' 排除")
+                    break
+            
+            # 🆕 检查模块级 negative_keywords
+            if module_name not in excluded_modules:
+                module_data = raw_config.get(key, {})
+                module_negatives = module_data.get("negative_keywords", [])
+                for neg in module_negatives:
+                    if isinstance(neg, str) and neg.lower() in tag_text:
+                        excluded_modules.add(module_name)
+                        logger.debug(f"模块 {module_name} 被模块级排除词 '{neg}' 排除")
+                        break
+
+        # 3. 遍历每个模块，累加权重分
+        for key, module_name in modules:
+            if module_name in excluded_modules:
                 continue
-                
-            for keyword in keywords:
-                if keyword.lower() in tags_text:
-                    logger.info(f"🎯 传统关键词匹配: '{keyword}' -> {module}")
-                    return module
+            module_data = raw_config.get(key, {})
+            ai_batch = module_data.get("ai_batch", {})
+            score = 0
+            for cat in ["object", "scene", "emotion", "brand"]:
+                words = ai_batch.get(cat, [])
+                for item in words:
+                    if isinstance(item, dict):
+                        word = item.get("word", "")
+                        weight = item.get("weight", 1)
+                    else:
+                        word = str(item)
+                        weight = 1
+                    if word and word.lower() in tag_text:
+                        score += weight
+            if score > 0:
+                module_scores[module_name] = score
+
+        if not module_scores:
+            return None
+        # 4. 得分最高的模块归属
+        best_module = max(module_scores, key=module_scores.get)
+        logger.info(f"权重打分归属: {' '.join(all_tags)} -> {best_module} (分数: {module_scores[best_module]})")
         
-        logger.info(f"🎯 所有规则均未匹配: '{tags_text}'")
-        return None
+        # 🆕 输出排除日志以便调试
+        if excluded_modules:
+            logger.debug(f"被排除的模块: {list(excluded_modules)}")
+        
+        return best_module
     
     def _is_pain_point_by_combination(self, all_tags: List[str]) -> bool:
         """
@@ -380,13 +453,16 @@ class VideoSegmentMapper:
         """
         if not all_tags:
             return False
-            
+        
+        # 🔧 过滤None值，确保类型安全
+        all_tags = [tag for tag in all_tags if tag is not None and isinstance(tag, str)]
+        
         tags_text = " ".join(all_tags).lower()
         
         # 检查是否有宝宝在场
         has_baby = False
-        for baby_keyword in self.pain_point_rules["baby_presence"]:
-            if baby_keyword.lower() in tags_text:
+        for baby_keyword in self.pain_point_rules.get("baby_prescene", []):
+            if baby_keyword and isinstance(baby_keyword, str) and baby_keyword.lower() in tags_text:
                 has_baby = True
                 logger.debug(f"痛点检测: 发现宝宝关键词 '{baby_keyword.lower()}'")
                 break
@@ -394,8 +470,8 @@ class VideoSegmentMapper:
         # 检查是否有负面情绪
         has_negative_emotion = False
         matched_emotion = None
-        for emotion_keyword in self.pain_point_rules["negative_emotions"]:
-            if emotion_keyword.lower() in tags_text:
+        for emotion_keyword in self.pain_point_rules.get("negative_emotions", []):
+            if emotion_keyword and isinstance(emotion_keyword, str) and emotion_keyword.lower() in tags_text:
                 has_negative_emotion = True
                 matched_emotion = emotion_keyword.lower()
                 logger.debug(f"痛点检测: 发现负面情绪关键词 '{emotion_keyword.lower()}'")
@@ -415,6 +491,53 @@ class VideoSegmentMapper:
         
         return is_pain_point
     
+    def _check_duration_limit(self, segment_info: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        检查片段时长是否超过限制
+        
+        Args:
+            segment_info: 片段信息字典
+            
+        Returns:
+            Dict: 如果超过限制则返回排除信息，否则返回None
+        """
+        try:
+            if not segment_info or not isinstance(segment_info, dict):
+                return None
+            
+            # 获取片段时长
+            duration = segment_info.get('duration', 0)
+            if not duration:
+                return None
+            
+            # 获取配置中的最大时长限制
+            max_duration = 10  # 默认10秒
+            
+            if hasattr(self, 'rules') and self.rules:
+                global_settings = self.rules.get("GLOBAL_SETTINGS", {})
+                if isinstance(global_settings, dict):
+                    max_duration = global_settings.get("max_duration_seconds", 10)
+            
+            # 检查是否超过限制
+            if duration > max_duration:
+                segment_name = segment_info.get("file_name", "unknown")
+                reason = f"时长{duration:.1f}s超过限制{max_duration}s"
+                
+                logger.info(f"🕒 时长过滤: {segment_name} ({reason})")
+                
+                return {
+                    "is_excluded": True,
+                    "reason": reason,
+                    "duration": duration,
+                    "max_duration": max_duration
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"时长检查失败: {e}")
+            return None
+    
     def _detailed_exclusion_check(self, tags_text: str) -> Dict[str, Any]:
         """
         详细的排除关键词检查，返回完整的检查结果
@@ -432,48 +555,38 @@ class VideoSegmentMapper:
         }
         
         try:
-            # 检查映射规则配置文件
-            config_file = "../config/matching_rules.json"
-            if not os.path.exists(config_file):
-                config_file = "config/matching_rules.json"
+            # 🔧 使用ConfigManager替代直接读取matching_rules.json
+            from utils.config_manager import get_config_manager
+            config_manager = get_config_manager()
+            matching_rules = config_manager.get_matching_rules()
             
-            if os.path.exists(config_file):
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    matching_rules = json.load(f)
-                
-                # 检查模块级别的排除关键词
-                for module, rules in matching_rules.items():
-                    if module == "GLOBAL_SETTINGS":
-                        continue
-                    
-                    negative_keywords = rules.get("negative_keywords", [])
-                    module_matches = []
-                    
-                    for neg_kw in negative_keywords:
-                        if neg_kw.lower() in tags_text.lower():
-                            module_matches.append(neg_kw)
-                    
-                    if module_matches:
-                        result["is_excluded"] = True
-                        result["exclusion_reasons"].append(f"{module}模块排除: {module_matches}")
-                        result["matched_keywords"][module] = module_matches
-                
-                # 检查全局排除设置
-                if "GLOBAL_SETTINGS" in matching_rules:
-                    global_settings = matching_rules["GLOBAL_SETTINGS"]
-                    irrelevant_categories = global_settings.get("irrelevant_scene_categories", {})
-                    
-                    for category, keywords in irrelevant_categories.items():
-                        global_matches = []
-                        for kw in keywords:
-                            if kw.lower() in tags_text.lower():
-                                global_matches.append(kw)
-                        
-                        if global_matches:
-                            result["is_excluded"] = True
-                            result["exclusion_reasons"].append(f"全局排除-{category}: {global_matches}")
-                            result["matched_keywords"][f"global_{category}"] = global_matches
+            if not isinstance(matching_rules, dict):
+                logger.warning(f"配置规则类型错误: {type(matching_rules).__name__}")
+                return result
             
+            # 检查模块级别的排除关键词
+            for module, rules in matching_rules.items():
+                if not isinstance(rules, dict):
+                    logger.debug(f"跳过模块 {module}，数据类型错误: {type(rules).__name__}")
+                    continue
+                
+                negative_keywords = rules.get("negative_keywords", [])
+                
+                if not isinstance(negative_keywords, list):
+                    logger.warning(f"模块 {module} negative_keywords类型错误: {type(negative_keywords).__name__}")
+                    continue
+                    
+                module_matches = []
+                
+                for neg_kw in negative_keywords:
+                    if isinstance(neg_kw, str) and neg_kw.lower() in tags_text.lower():
+                        module_matches.append(neg_kw)
+                
+                if module_matches:
+                    result["is_excluded"] = True
+                    result["exclusion_reasons"].append(f"{module}模块排除: {module_matches}")
+                    result["matched_keywords"][module] = module_matches
+        
         except Exception as e:
             logger.error(f"排除关键词检查失败: {e}")
         
@@ -490,6 +603,10 @@ class VideoSegmentMapper:
             Dict: 每个模块匹配的关键词列表
         """
         matches = {}
+        
+        # 🔧 过滤None值，确保类型安全
+        all_tags = [tag for tag in all_tags if tag is not None and isinstance(tag, str)]
+        
         tags_text = " ".join(all_tags).lower()
         
         for module in self.four_modules:
@@ -499,7 +616,7 @@ class VideoSegmentMapper:
             if module in self.keyword_rules:
                 keywords = self.keyword_rules[module]
                 for kw in keywords:
-                    if kw.lower() in tags_text:
+                    if kw and isinstance(kw, str) and kw.lower() in tags_text:
                         module_matches.append(kw)
             
             matches[module] = module_matches
@@ -508,7 +625,7 @@ class VideoSegmentMapper:
     
     def _is_excluded_by_negative_keywords(self, tags_text: str) -> bool:
         """
-        检查片段是否被负面关键词排除
+        🔧 简化版：检查片段是否被全局排除关键词排除
         
         Args:
             tags_text: 标签文本（已转换为小写）
@@ -517,64 +634,47 @@ class VideoSegmentMapper:
             bool: 是否应该被排除
         """
         try:
-            # 加载matching_rules.json中的排除配置
-            import json
-            config_file = "../config/matching_rules.json"
-            # 如果相对路径不存在，尝试绝对路径
-            if not os.path.exists(config_file):
-                config_file = "config/matching_rules.json"
-            if os.path.exists(config_file):
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    matching_rules = json.load(f)
-            else:
-                logger.warning("matching_rules.json不存在，跳过排除检查")
+            # 🔧 简化：使用已加载的配置
+            if not hasattr(self, 'rules') or not self.rules:
+                # 如果没有加载配置，尝试加载
+                self._load_matching_rules()
+                
+            # 🔧 NEW: 强化类型检查
+            if not self.rules or not isinstance(self.rules, dict):
+                logger.warning(f"配置规则类型错误或为空: {type(self.rules).__name__ if self.rules else 'None'}")
                 return False
             
-            # 🚫 检查全局排除关键词（优先级最高）
-            if "GLOBAL_SETTINGS" in matching_rules:
-                global_exclusion = matching_rules["GLOBAL_SETTINGS"].get("global_exclusion_keywords", [])
-                for global_kw in global_exclusion:
-                    if global_kw.lower() in tags_text:
-                        logger.warning(f"🚫 全局排除关键词过滤: '{global_kw}' 在 '{tags_text}' 中")
-                        return True
-            
-            # 1. 检查全局排除关键词
-            if "GLOBAL_SETTINGS" in matching_rules:
-                global_settings = matching_rules["GLOBAL_SETTINGS"]
-                irrelevant_categories = global_settings.get("irrelevant_scene_categories", {})
+            # 🚫 只检查全局排除关键词（简化逻辑）
+            if "GLOBAL_SETTINGS" in self.rules:
+                global_settings = self.rules["GLOBAL_SETTINGS"]
                 
-                for category, keywords in irrelevant_categories.items():
-                    for keyword in keywords:
-                        if keyword.lower() in tags_text:
-                            logger.warning(f"🚨 全局排除命中 - {category}: '{keyword}' 在 '{tags_text}' 中")
+                # 🔧 NEW: 确保GLOBAL_SETTINGS也是字典
+                if not isinstance(global_settings, dict):
+                    logger.warning(f"GLOBAL_SETTINGS类型错误: {type(global_settings).__name__}")
+                    return False
+                
+                # 检查全局排除关键词
+                global_exclusion = global_settings.get("global_exclusion_keywords", [])
+                if isinstance(global_exclusion, list):
+                    for global_kw in global_exclusion:
+                        if isinstance(global_kw, str) and global_kw.lower() in tags_text:
+                            logger.info(f"🚫 全局排除关键词过滤: '{global_kw}' 在 '{tags_text}' 中")
                             return True
             
-            # 2. 检查各模块的负面关键词
-            modules = ["痛点", "解决方案导入", "卖点·成分&配方", "促销机制"]
-            
-            for module in modules:
-                if module in matching_rules:
-                    negative_keywords = matching_rules[module].get("negative_keywords", [])
-                    
-                    for neg_kw in negative_keywords:
-                        if neg_kw.lower() in tags_text:
-                            logger.warning(f"🚫 模块排除命中 - {module}: '{neg_kw}' 在 '{tags_text}' 中")
-                            return True
-            
-            # 3. 检查solution_intro和pain_point的特殊排除规则
-            for special_module in ["solution_intro", "pain_point"]:
-                if special_module in matching_rules:
-                    negative_keywords = matching_rules[special_module].get("negative_keywords", [])
-                    
-                    for neg_kw in negative_keywords:
-                        if neg_kw.lower() in tags_text:
-                            logger.warning(f"🚫 特殊排除命中 - {special_module}: '{neg_kw}' 在 '{tags_text}' 中")
-                            return True
+                # 检查无关场景类别
+                irrelevant_categories = global_settings.get("irrelevant_scene_categories", {})
+                if isinstance(irrelevant_categories, dict):
+                    for category, keywords in irrelevant_categories.items():
+                        if isinstance(keywords, list):
+                            for keyword in keywords:
+                                if isinstance(keyword, str) and keyword.lower() in tags_text:
+                                    logger.info(f"🚫 无关场景过滤 - {category}: '{keyword}' 在 '{tags_text}' 中")
+                                    return True
             
             return False
             
         except Exception as e:
-            logger.error(f"排除关键词检查失败: {e}")
+            logger.warning(f"排除关键词检查失败: {e}")
             return False
     
     def _classify_by_embedding_similarity(self, all_tags: List[str]) -> str:
@@ -700,89 +800,43 @@ class VideoSegmentMapper:
         try:
             analyzer = self.deepseek_analyzer
             
-            # 🔧 使用统一的prompt配置
+            # 🔧 使用简化的分类prompt，避免冗余
             try:
-                from streamlit_app.utils.keyword_config import get_mapper_keywords
-                keywords = get_mapper_keywords()
+                # 动态构建分类指令
+                config_manager = get_config_manager()
+                rules = config_manager.get_matching_rules()
                 
-                # 构建分类系统prompt
-                system_content = """你是一个专业的母婴视频内容分析师。请根据视频标签，将内容分类为以下四种机制之一：
-
-1. 痛点机制：宝宝哭闹、不适、喂养困难等负面情况
-2. 促销机制：宝宝开心、活力、玩耍等正面场景  
-3. 科普机制：营养知识、育儿方法、专业指导
-4. 情感机制：母爱、亲情、温馨、陪伴
-
-请只回答机制名称，不要其他解释。如果无法确定，回答"其他"。"""
+                system_prompt_parts = ["你是一个专业的母婴视频内容分析师。请根据视频标签，将内容分类为以下四个模块之一："]
+                for module, config in rules.items():
+                    # 拼接核心词作为模块描述
+                    core_terms = ", ".join(config.get('core_identity', []))
+                    system_prompt_parts.append(f"- **{module}**: 核心信号包括 {core_terms}")
+                
+                system_prompt_parts.append("\n请只回答模块名称，不要其他解释。如果无法确定，回答\"其他\"。")
+                system_content = "\n".join(system_prompt_parts)
                 
             except Exception as e:
-                logger.warning(f"无法导入统一关键词配置: {e}")
-                system_content = """你是一个专业的母婴视频内容分析师。请根据视频标签，将内容分类为以下四种机制之一：
+                logger.warning(f"无法从配置中心构建DeepSeek prompt: {e}，使用兜底prompt")
+                system_content = """你是一个专业的母婴视频内容分析师。请根据视频标签，将内容分类为以下四个模块之一：
 
-1. 痛点机制：宝宝哭闹、不适、喂养困难等负面情况
-2. 促销机制：宝宝开心、活力、玩耍等正面场景  
-3. 科普机制：营养知识、育儿方法、专业指导
-4. 情感机制：母爱、亲情、温馨、陪伴
+1. 痛点：宝宝哭闹、不适、喂养困难、生病、焦虑等负面情况
+2. 解决方案导入：冲奶粉、使用奶瓶、喂养过程、产品使用等行动场景
+3. 卖点·成分&配方：A2蛋白、HMO、DHA、营养成分、产品特色等专业内容
+4. 促销机制：宝宝开心、活力满满、健康成长、优惠活动等正面推广
 
-请只回答机制名称，不要其他解释。如果无法确定，回答"其他"。"""
+请只回答模块名称，不要其他解释。如果无法确定，回答"其他"。"""
+
+            user_content = f"视频标签: {', '.join(all_tags)}。请分类。"
             
-            messages = [
-                {
-                    "role": "system",
-                    "content": system_content
-                },
-                {
-                    "role": "user", 
-                    "content": f"请分析这些视频标签：{tags_text}"
-                }
-            ]
+            response = analyzer.analyze_text(system_content, user_content)
             
-            # 使用线程和超时机制
-            result_container = {"result": None, "error": None}
-            
-            def call_deepseek():
-                try:
-                    response = analyzer._chat_completion(messages)
-                    if response and "choices" in response and len(response["choices"]) > 0:
-                        content = response["choices"][0]["message"]["content"].strip()
-                        result_container["result"] = content
-                    else:
-                        result_container["error"] = "API响应格式无效"
-                except Exception as e:
-                    result_container["error"] = str(e)
-            
-            # 启动线程
-            thread = threading.Thread(target=call_deepseek)
-            thread.daemon = True
-            thread.start()
-            
-            # 等待结果，设置超时
-            timeout = 10  # 10秒超时
-            thread.join(timeout)
-            
-            if thread.is_alive():
-                # 超时，使用embedding fallback
-                logger.warning(f"DeepSeek API调用超时，回退到关键词分类: {tags_text}")
-                keyword_result = self.classify_segment_by_tags(all_tags)
-                return keyword_result if keyword_result else "其他"
-            
-            if result_container["error"]:
-                logger.error(f"DeepSeek API调用失败: {result_container['error']}")
-                logger.info("回退到关键词分类")
-                keyword_result = self.classify_segment_by_tags(all_tags)
-                return keyword_result if keyword_result else "其他"
-            
-            result = result_container["result"]
-            if result:
-                # 验证返回的分类是否有效
-                valid_categories = ["痛点机制", "促销机制", "科普机制", "情感机制", "其他"]
-                if any(cat in result for cat in valid_categories):
-                    for cat in valid_categories:
-                        if cat in result:
-                            logger.info(f"DeepSeek分类成功: {tags_text} -> {cat}")
-                            return cat
+            if response and "choices" in response and len(response["choices"]) > 0:
+                content = response["choices"][0]["message"]["content"].strip()
+                if content in self.four_modules:
+                    logger.info(f"DeepSeek分类成功: {tags_text} -> {content}")
+                    return content
                 else:
-                    logger.warning(f"DeepSeek返回无效分类: {result}, 回退到关键词分类")
+                    logger.warning(f"DeepSeek返回无效分类: {content}, 回退到关键词分类")
                     keyword_result = self.classify_segment_by_tags(all_tags)
                     return keyword_result if keyword_result else "其他"
             else:
@@ -799,98 +853,43 @@ class VideoSegmentMapper:
     def classify_segment(self, all_tags: List[str], segment_info: Optional[Dict[str, Any]] = None) -> str:
         """
         对片段进行分类（关键词优先，DeepSeek兜底），并记录详细决策过程
-        
-        Args:
-            all_tags: 片段的所有标签列表
-            segment_info: 片段详细信息（用于日志记录）
-            
-        Returns:
-            str: 分类结果
         """
-        # 🔧 添加调试信息
+        selection_logger = get_selection_logger()
         logger.debug(f"开始分类片段，标签: {all_tags}")
         
-        # 初始化选片日志
-        try:
-            from streamlit_app.modules.selection_logger import get_selection_logger
-            selection_logger = get_selection_logger()
-        except ImportError:
-            selection_logger = None
+        # 第一步：关键词规则分类
+        category = self.classify_segment_by_tags(all_tags)
         
-        analysis_steps = []
-        segment_name = segment_info.get("file_name", "unknown") if segment_info else "unknown"
-        
-        # 🚫 第一步：检查排除关键词
-        tags_text = " ".join(all_tags).lower()
-        exclusion_result = self._detailed_exclusion_check(tags_text)
-        
-        if selection_logger:
-            exclusion_step = selection_logger.log_exclusion_check(
-                segment_name, all_tags, exclusion_result
+        if category:
+            log_reason = "关键词分类成功"
+            selection_logger.log_step(
+                step_type="keyword_classification",
+                input_tags=all_tags,
+                result=category
             )
-            analysis_steps.append(exclusion_step)
         
-        if exclusion_result.get("is_excluded", False):
-            logger.info(f"🚫 片段被排除关键词过滤: '{' '.join(all_tags)}'")
-            
-            if selection_logger and segment_info:
-                selection_logger.log_segment_analysis(
-                    segment_info, analysis_steps, "其他", 
-                    f"被排除关键词过滤: {exclusion_result.get('exclusion_reasons', [])}"
-                )
-            
-            return "其他"
+        # 第二步：如果关键词分类失败，使用DeepSeek模型
+        else:
+            logger.info(f"关键词规则无法分类标签 {all_tags}，使用DeepSeek模型")
+            category = self.classify_segment_by_deepseek(all_tags)
+            log_reason = "AI分类成功，关键词分类失败" if category != "其他" else "关键词和AI分类都无法确定类别"
+
+        # 第三步：应用负面关键词过滤
+        if category and category != "其他":
+            filtered_category, filter_reason = self._apply_module_negative_filter(category, all_tags)
+            if filtered_category != category:
+                logger.info(f"🚫 分类已由负面关键词过滤: {category} -> {filtered_category} ({filter_reason})")
+                category = filtered_category
+                log_reason = f"负面关键词过滤: {filter_reason}"
+
+        # 记录最终结果
+        selection_logger.log_final_result(
+            final_category=category,
+            reason=log_reason,
+            segment_info=segment_info
+        )
         
-        # 🎯 第二步：基于关键词的快速分类
-        keyword_matches = self._get_keyword_matches(all_tags)
-        keyword_result = self.classify_segment_by_tags(all_tags)
-        
-        if selection_logger:
-            keyword_step = selection_logger.log_keyword_classification(
-                segment_name, all_tags, keyword_matches, keyword_result
-            )
-            analysis_steps.append(keyword_step)
-        
-        if keyword_result:
-            logger.debug(f"关键词分类成功: {all_tags} -> {keyword_result}")
-            
-            if selection_logger and segment_info:
-                selection_logger.log_segment_analysis(
-                    segment_info, analysis_steps, keyword_result,
-                    f"关键词匹配成功: {keyword_matches.get(keyword_result, [])}"
-                )
-            
-            return keyword_result
-        
-        # 🤖 第三步：如果关键词分类失败，使用AI分类
-        logger.info(f"关键词规则无法分类标签 {all_tags}，使用DeepSeek模型")
-        
-        ai_start_time = time.time()
-        deepseek_result = self.classify_segment_by_deepseek(all_tags)
-        ai_duration = time.time() - ai_start_time
-        
-        if selection_logger:
-            ai_step = selection_logger.log_ai_classification(
-                segment_name, all_tags, deepseek_result, 0.8,  # 默认置信度
-                {"duration": ai_duration, "error": None}
-            )
-            analysis_steps.append(ai_step)
-        
-        logger.debug(f"DeepSeek分类结果: {all_tags} -> {deepseek_result}")
-        
-        if selection_logger and segment_info:
-            if deepseek_result and deepseek_result != "其他":
-                selection_logger.log_segment_analysis(
-                    segment_info, analysis_steps, deepseek_result,
-                    "AI分类成功，关键词分类失败"
-                )
-            else:
-                selection_logger.log_segment_analysis(
-                    segment_info, analysis_steps, "其他",
-                    "关键词和AI分类都无法确定类别"
-                )
-        
-        return deepseek_result
+        return category
     
     def scan_video_pool(self, video_pool_path: str = "data/output/google_video/video_pool") -> List[Dict[str, Any]]:
         """
@@ -904,17 +903,25 @@ class VideoSegmentMapper:
         """
         mapped_segments = []
         
+        # 🔧 核心修复：添加映射阶段去重机制
+        seen_segment_ids = set()  # 用于跟踪已经映射的片段ID
+        
+        # 🔧 使用跨平台兼容的路径解析
+        resolved_path = resolve_video_pool_path(video_pool_path)
+        logger.info(f"🔍 解析video_pool路径: {video_pool_path} -> {resolved_path}")
+        
         # 确保路径存在
-        if not os.path.exists(video_pool_path):
-            logger.error(f"video_pool目录不存在: {video_pool_path}")
+        if not os.path.exists(resolved_path):
+            logger.error(f"video_pool目录不存在: {resolved_path}")
+            logger.error(f"当前工作目录: {os.getcwd()}")
             return mapped_segments
         
         # 查找所有JSON文件
-        json_files = glob.glob(os.path.join(video_pool_path, "*.json"))
-        logger.info(f"在 {video_pool_path} 中找到 {len(json_files)} 个JSON文件")
+        json_files = glob.glob(os.path.join(resolved_path, "*.json"))
+        logger.info(f"在 {resolved_path} 中找到 {len(json_files)} 个JSON文件")
         
         if not json_files:
-            logger.warning(f"在 {video_pool_path} 中未找到任何JSON文件")
+            logger.warning(f"在 {resolved_path} 中未找到任何JSON文件")
             return mapped_segments
         
         # 处理每个JSON文件，添加进度跟踪
@@ -947,7 +954,7 @@ class VideoSegmentMapper:
                     try:
                         # 🔧 添加片段处理进度日志
                         if seg_idx % 10 == 0:  # 每10个片段记录一次
-                            logger.debug(f"处理片段进度: {seg_idx + 1}/{len(segments)}")
+                            logger.info(f"🔄 处理片段进度: {seg_idx + 1}/{len(segments)}")
                         
                         # 基本信息提取
                         file_path = segment.get('file_path', '')
@@ -965,7 +972,7 @@ class VideoSegmentMapper:
                             # 从旧格式字段构建标签 - 支持字符串和逗号分隔格式
                             raw_fields = [
                                 segment.get('object', ''),
-                                segment.get('sence', ''),
+                                segment.get('scene', ''),
                                 segment.get('emotion', ''),
                                 segment.get('brand_elements', '')
                             ]
@@ -1014,6 +1021,17 @@ class VideoSegmentMapper:
                         else:
                             logger.warning(f"视频文件不存在: {file_path}")
                         
+                        # 🕒 NEW: 检查时长限制，直接在扫描阶段过滤长视频
+                        max_duration = 10  # 默认10秒
+                        if hasattr(self, 'rules') and self.rules:
+                            global_settings = self.rules.get("GLOBAL_SETTINGS", {})
+                            if isinstance(global_settings, dict):
+                                max_duration = global_settings.get("max_duration_seconds", 10)
+                        
+                        if duration > max_duration:
+                            logger.info(f"🕒 时长过滤: {file_name} (时长{duration:.1f}s > 限制{max_duration}s)")
+                            continue
+                        
                         # 🔧 构建片段信息用于日志记录
                         segment_info_for_logging = {
                             "file_name": file_name,
@@ -1025,13 +1043,25 @@ class VideoSegmentMapper:
                         
                         # 🔧 添加超时控制的分类处理
                         try:
+                            logger.debug(f"🔍 开始分类片段: {file_name} 标签: {all_tags}")
                             category = self.classify_segment(all_tags, segment_info_for_logging)
+                            logger.info(f"🎯 分类完成: {file_name} -> {category}")
                         except Exception as e:
-                            logger.error(f"片段分类失败: {all_tags}, 错误: {e}")
+                            logger.error(f"❌ 片段分类失败: {file_name} {all_tags}, 错误: {e}")
                             category = "其他"
                         
                         # 计算综合质量分
                         combined_quality = quality_score * confidence
+                        
+                        # 🔧 生成片段的唯一标识符进行去重检查（增强版）
+                        # 使用文件路径+文件名+标签的组合来确保唯一性
+                        tags_signature = "_".join(sorted(all_tags[:5]))  # 前5个标签排序组合
+                        unique_id = f"{video_id}::{file_name}::{file_path}::{tags_signature}"
+                        
+                        # 🔧 核心去重检查：避免重复映射
+                        if unique_id in seen_segment_ids:
+                            logger.info(f"🚫 跳过重复片段: {file_name} (ID: {unique_id[:100]}...)")
+                            continue
                         
                         # 构建映射结果
                         mapped_segment = {
@@ -1052,8 +1082,10 @@ class VideoSegmentMapper:
                             "success": True
                         }
                         
+                        # 🔧 添加到已见集合和结果列表
+                        seen_segment_ids.add(unique_id)
                         mapped_segments.append(mapped_segment)
-                        logger.debug(f"成功映射片段: {file_name} -> {category} (时长: {duration:.2f}s)")
+                        logger.info(f"✅ 映射片段: {file_name} -> {category} (时长: {duration:.2f}s, 标签: {all_tags[:3]})")
                         
                     except Exception as e:
                         logger.error(f"处理片段失败: {segment.get('file_name', segment.get('filename', 'unknown'))}, 错误: {e}")
@@ -1065,7 +1097,11 @@ class VideoSegmentMapper:
                 logger.error(f"处理JSON文件失败: {json_file}, 错误: {e}")
                 continue
         
-        logger.info(f"映射完成，共处理 {len(mapped_segments)} 个有效片段")
+        logger.info(f"🎯 映射完成统计:")
+        logger.info(f"   - 最终有效片段: {len(mapped_segments)} 个")
+        logger.info(f"   - 已处理唯一ID: {len(seen_segment_ids)} 个")
+        logger.info(f"   - 去重效果: {len(seen_segment_ids) - len(mapped_segments)} 个重复被过滤")
+        
         return mapped_segments
     
     def get_mapping_statistics(self, mapped_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1169,6 +1205,61 @@ class VideoSegmentMapper:
         self.embedding_model = None
         self.embedding_util = None
         return False
+
+    def _apply_module_negative_filter(self, predicted_module: str, all_tags: List[str]) -> Tuple[str, str]:
+        """
+        应用模块特定的负面关键词过滤
+        
+        Args:
+            predicted_module: 预测的模块名
+            all_tags: 片段标签列表
+            
+        Returns:
+            Tuple[str, str]: (最终模块, 过滤原因)
+        """
+        # 🔧 过滤None值，确保类型安全
+        all_tags = [tag for tag in all_tags if tag is not None and isinstance(tag, str)]
+        
+        tags_text = ' '.join(all_tags).lower()
+        
+        # 获取关键词配置
+        try:
+            from utils.config_manager import get_config_manager
+            config_manager = get_config_manager()
+            raw_config = config_manager.get_raw_config()
+            keywords_config = raw_config
+        except Exception as e:
+            logger.error(f"无法加载关键词配置: {e}")
+            return predicted_module, ""
+        
+        # 特殊处理：卖点·成分&配方模块的负面过滤
+        if predicted_module == "卖点·成分&配方":
+            try:
+                # 检查features_formula的负面关键词
+                negatives = keywords_config.get('features_formula', {}).get('negative_keywords', [])
+                detected_negatives = [neg for neg in negatives if neg and isinstance(neg, str) and neg in tags_text]
+                
+                if detected_negatives:
+                    # 特别检查玩耍、商场等场景
+                    play_scene_negatives = ['玩具', '滑梯', '商场', '游乐场', '户外', '公园', '玩耍', '游戏']
+                    if any(neg in detected_negatives for neg in play_scene_negatives):
+                        logger.info(f"🚫 移除卖点·成分&配方分类: 检测到玩耍/商场场景 {detected_negatives}")
+                        return "其他", f"检测到非奶粉相关场景: {detected_negatives}"
+                    
+                    # 检查医疗场景
+                    medical_negatives = ['医院', '诊所', '医生', '急诊', '儿科', '治疗']
+                    if any(neg in detected_negatives for neg in medical_negatives):
+                        logger.info(f"🚫 移除卖点·成分&配方分类: 检测到医疗场景 {detected_negatives}")
+                        return "痛点", f"重新分类为痛点: {detected_negatives}"
+                    
+                    # 其他负面关键词
+                    logger.info(f"🚫 移除卖点·成分&配方分类: 检测到负面关键词 {detected_negatives}")
+                    return "其他", f"检测到负面关键词: {detected_negatives}"
+                    
+            except Exception as e:
+                logger.error(f"卖点模块负面过滤失败: {e}")
+        
+        return predicted_module, ""
 
 # 缓存的映射函数
 @st.cache_data(ttl=3600, show_spinner=False)

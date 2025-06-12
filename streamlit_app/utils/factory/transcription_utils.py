@@ -161,7 +161,7 @@ def _perform_transcription(
     try:
         # 🎯 优先尝试使用新的DashScope分析器
         try:
-            from streamlit_app.modules.ai_analyzers.dashscope_audio_analyzer import DashScopeAudioAnalyzer
+            from modules.ai_analyzers.dashscope_audio_analyzer import DashScopeAudioAnalyzer
             
             analyzer = DashScopeAudioAnalyzer()
             if analyzer.is_available():
@@ -247,14 +247,20 @@ def _create_srt_from_transcript(transcript: str, segments: List[Dict[str, Any]] 
     
     for i, segment in enumerate(segments):
         if segment.get('text', '').strip():
-            # 转换毫秒为SRT格式时间戳
-            start_ms = segment.get('start_time', 0)
-            end_ms = segment.get('end_time', start_ms + 3000)
+            # 获取时间戳（单位为秒，需要转换为毫秒）
+            start_seconds = segment.get('start', 0)
+            end_seconds = segment.get('end', start_seconds + 3)
+            
+            # 转换为毫秒
+            start_ms = int(start_seconds * 1000)
+            end_ms = int(end_seconds * 1000)
             
             # 验证时间戳有效性
             if start_ms < 0 or end_ms <= start_ms:
                 logger.warning(f"片段 {i+1} 时间戳无效: {start_ms}ms -> {end_ms}ms，跳过")
                 continue
+            
+            logger.info(f"片段 {i+1}: {start_seconds:.3f}s -> {end_seconds:.3f}s 转换为 {start_ms}ms -> {end_ms}ms")
             
             srt_content.append(f"{valid_segments + 1}")
             srt_content.append(f"{_format_timestamp_ms(start_ms)} --> {_format_timestamp_ms(end_ms)}")
@@ -446,7 +452,7 @@ def _perform_deepseek_audience_analysis(transcript: str) -> Dict[str, Any]:
     """使用DeepSeek进行目标人群分析"""
     try:
         # 导入DeepSeek分析器
-        from streamlit_app.modules.ai_analyzers.deepseek_analyzer import DeepSeekAnalyzer
+        from modules.ai_analyzers.deepseek_analyzer import DeepSeekAnalyzer
         
         analyzer = DeepSeekAnalyzer()
         
@@ -662,7 +668,7 @@ def validate_transcription_dependencies() -> Dict[str, bool]:
     
     # 检查DeepSeek分析器
     try:
-        from streamlit_app.modules.ai_analyzers.deepseek_analyzer import DeepSeekAnalyzer
+        from modules.ai_analyzers.deepseek_analyzer import DeepSeekAnalyzer
         analyzer = DeepSeekAnalyzer()
         checks["deepseek_analyzer_available"] = analyzer.is_available()
     except ImportError:

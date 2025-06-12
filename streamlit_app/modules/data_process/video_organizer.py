@@ -9,7 +9,7 @@ import logging
 import traceback
 from pathlib import Path
 
-from streamlit_app.config.config import get_config, get_paths_config, get_semantic_segment_types
+from config.config import get_config, get_paths_config, get_semantic_segment_types
 
 # 设置日志
 logger = logging.getLogger(__name__)

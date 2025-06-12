@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import logging
 import datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 import json
 from pathlib import Path
 from enum import Enum
@@ -16,7 +16,21 @@ import random
 import difflib  # 添加用于计算文本相似度
 import time  # 添加时间模块
 
+# 导入核心工具
+from utils.config_manager import get_config_manager
+from modules.mapper import VideoSegmentMapper
+
 logger = logging.getLogger(__name__)
+
+# 实例化一次，全局共享
+try:
+    config_manager = get_config_manager()
+    segment_mapper = VideoSegmentMapper()
+    logger.info("全局ConfigManager和VideoSegmentMapper实例化成功。")
+except Exception as e:
+    logger.error(f"实例化全局工具失败: {e}", exc_info=True)
+    config_manager = None
+    segment_mapper = None
 
 class SelectionMode(Enum):
     """片段选择模式枚举"""
@@ -34,14 +48,15 @@ class VideoComposer:
     def _get_max_segments_per_module(self) -> int:
         """从配置文件读取每个模块的最大片段数限制"""
         try:
-            import json
-            config_file = "config/matching_rules.json"
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            max_segments_limit = config.get("GLOBAL_SETTINGS", {}).get("max_segments_per_module", 3)
-            return max_segments_limit
+            if config_manager:
+                # 假设在global_settings中定义
+                raw_config = config_manager.get_raw_config()
+                global_settings = raw_config.get("global_settings", {})
+                return global_settings.get("max_segments_per_module", 3)
+            # Fallback if config_manager is not available
+            return 3
         except Exception as e:
-            logger.warning(f"无法读取配置文件，使用默认限制3个片段: {e}")
+            logger.warning(f"无法从配置中心读取最大片段数，使用默认限制3个: {e}")
             return 3
         
     def select_segments_by_duration(
@@ -52,7 +67,9 @@ class VideoComposer:
         selection_mode: SelectionMode = SelectionMode.OPTIMAL,
         randomness_level: str = "适中",
         random_seed: Optional[int] = None,
-        manual_selections: Optional[Dict[str, List[str]]] = None
+        manual_selections: Optional[Dict[str, List[str]]] = None,
+        # 🔧 核心改造：接收一个外部的used_segment_ids集合
+        used_segment_ids: Optional[Set[str]] = None
     ) -> Dict[str, Any]:
         """
         按时长比例精确选择片段
@@ -65,6 +82,7 @@ class VideoComposer:
             randomness_level: 随机强度参数 ("保守", "适中", "激进")
             random_seed: 随机种子
             manual_selections: 手动选择的片段ID字典
+            used_segment_ids: 用于去重的已使用片段ID集合
             
         Returns:
             Dict: 选择结果
@@ -91,9 +109,49 @@ class VideoComposer:
             "module_details": {}
         }
         
+        # 🔧 核心改造：如果未提供used_segment_ids，则在函数内部创建
+        if used_segment_ids is None:
+            used_segment_ids = set()
+            logger.info("🔧 未提供外部used_segment_ids，创建新的集合")
+        else:
+            logger.info(f"🔧 使用外部提供的used_segment_ids集合，当前包含 {len(used_segment_ids)} 个ID")
+        
+        # 0. 全局排除过滤 (最高优先级)
+        initial_count = len(mapped_segments)
+        if config_manager and segment_mapper:
+            global_exclusion_keywords = config_manager.get_global_exclusion_keywords()
+            if global_exclusion_keywords:
+                # 保留未被全局排除的片段
+                segments_after_exclusion = []
+                for segment in mapped_segments:
+                    all_tags = segment.get('all_tags', [])
+                    # 使用小写进行不区分大小写的比较
+                    lower_tags = {tag.lower() for tag in all_tags}
+                    lower_exclusions = {kw.lower() for kw in global_exclusion_keywords}
+                    if not lower_tags.intersection(lower_exclusions):
+                        segments_after_exclusion.append(segment)
+                    else:
+                        logger.info(f"🚫 [全局排除] 片段 '{segment.get('file_name')}' 因包含 {lower_tags.intersection(lower_exclusions)} 被过滤。")
+                
+                mapped_segments = segments_after_exclusion
+                excluded_count = initial_count - len(mapped_segments)
+                if excluded_count > 0:
+                    logger.info(f"🚫 [全局排除] 共 {excluded_count} 个片段被过滤。")
+        else:
+            logger.warning("ConfigManager或SegmentMapper未初始化，跳过全局排除。")
+        
+        logger.info(f"🎯 选片策略: {selection_mode.value}, 目标时长: {total_target_duration}s")
+        logger.info(f"🎯 模块比例: {target_ratios} -> 目标时长: {[f'{d:.1f}s' for d in target_durations]}")
+        
+        # 获取详细日志记录器
+        from modules.selection_logger import get_selection_logger
+        detail_logger = get_selection_logger()
+        
         # 为每个模块选择片段
         for i, module in enumerate(self.four_modules):
             target_duration = target_durations[i]
+            
+            logger.info(f"\n🎬 开始处理模块: {module} (目标时长: {target_duration:.1f}s)")
             
             # 🔧 添加调试信息：统计该模块的片段情况
             module_segments = [s for s in mapped_segments if s.get('category') == module]
@@ -104,6 +162,7 @@ class VideoComposer:
             logger.info(f"   总片段数: {len(module_segments)}")
             logger.info(f"   有效时长片段: {len(valid_duration_segments)} (duration > 0)")
             logger.info(f"   零时长片段: {len(zero_duration_segments)} (duration = 0)")
+            logger.info(f"   当前已使用片段ID: {len(used_segment_ids)} 个")
             
             if valid_duration_segments:
                 total_available_duration = sum(s.get('duration', 0) for s in valid_duration_segments)
@@ -126,44 +185,116 @@ class VideoComposer:
                 logger.info(f"👆 使用手动选择，模块 {module}: {len(selected)} 个片段（最多{max_segments_limit}个）")
                 
             else:
-                # 筛选该类别的片段并按质量排序
+                # 筛选该类别的片段并按质量排序，包含时长限制
+                # 🕒 NEW: 获取时长限制配置
+                max_duration = 10  # 默认10秒
+                try:
+                    if hasattr(segment_mapper, 'rules') and segment_mapper.rules:
+                        global_settings = segment_mapper.rules.get("GLOBAL_SETTINGS", {})
+                        if isinstance(global_settings, dict):
+                            max_duration = global_settings.get("max_duration_seconds", 10)
+                except Exception as e:
+                    logger.warning(f"获取时长限制配置失败，使用默认值10秒: {e}")
+                
+                # 🕒 NEW: 筛选时加入时长限制（排除大于10秒的视频）
                 candidates = [
                     s for s in mapped_segments 
-                    if s.get('category') == module and s.get('duration', 0) > 0
+                    if s.get('category') == module 
+                    and s.get('duration', 0) > 0 
+                    and s.get('duration', 0) <= max_duration
                 ]
                 
-                # 🚫 关键修复：在选择前先进行全局过滤检查
-                from streamlit_app.modules.mapper import VideoSegmentMapper
-                mapper = VideoSegmentMapper()
+                # 统计被时长过滤的片段
+                over_duration_count = len([
+                    s for s in mapped_segments 
+                    if s.get('category') == module 
+                    and s.get('duration', 0) > max_duration
+                ])
                 
-                # 过滤掉包含排除关键词的片段
-                filtered_candidates = []
-                for candidate in candidates:
-                    all_tags = candidate.get('all_tags', [])
-                    if all_tags:
-                        tags_text = " ".join(all_tags).lower()
-                        if not mapper._is_excluded_by_negative_keywords(tags_text):
-                            filtered_candidates.append(candidate)
-                        else:
-                            logger.warning(f"🚫 片段被全局排除: {candidate.get('file_name', 'unknown')} - 标签: {all_tags}")
+                if over_duration_count > 0:
+                    logger.info(f"🕒 模块 {module} 时长过滤: {over_duration_count} 个片段超过{max_duration}秒被排除")
+                
+                logger.info(f"🎯 模块 {module} 初始候选片段: {len(candidates)} 个")
+                
+                # 记录开始选片过程
+                detail_logger.log_module_selection_start(module, target_duration, len(candidates))
+                
+                # 🔧 核心修复：过滤掉已被其他模块选中的片段
+                candidates_before_dedup = len(candidates)
+                candidates_after_dedup = []
+                filtered_segments = []
+                
+                logger.info(f"🔍 模块 {module} 去重检查开始:")
+                logger.info(f"   - 候选片段数: {candidates_before_dedup}")
+                logger.info(f"   - 当前已使用片段ID: {sorted(list(used_segment_ids))}")
+                
+                for idx, candidate in enumerate(candidates):
+                    segment_id = self._get_unique_segment_identifier(candidate)
+                    file_name = candidate.get('file_name', 'unknown')
+                    
+                    if segment_id not in used_segment_ids:
+                        candidates_after_dedup.append(candidate)
+                        logger.debug(f"   ✅ [{idx+1}] 保留: {file_name} (ID: {segment_id})")
                     else:
-                        # 如果没有标签信息，保留片段
-                        filtered_candidates.append(candidate)
+                        filtered_segments.append(file_name)
+                        logger.warning(f"   🚫 [{idx+1}] 跳过已使用: {file_name} (ID: {segment_id})")
+                        detail_logger.log_segment_selection_detail(module, candidate, False, "已被其他模块选中")
                 
-                candidates = filtered_candidates
-                logger.info(f"🔍 模块 {module} 过滤后剩余候选片段: {len(candidates)} 个")
+                candidates = candidates_after_dedup
                 
+                logger.info(f"🔍 模块 {module} 去重检查结果:")
+                logger.info(f"   - 去重前: {candidates_before_dedup} 个")
+                logger.info(f"   - 去重后: {len(candidates)} 个") 
+                logger.info(f"   - 被过滤: {len(filtered_segments)} 个")
+                if filtered_segments:
+                    logger.warning(f"   - 过滤列表: {filtered_segments}")
+                
+                # 记录去重操作
+                detail_logger.log_deduplication_action(module, candidates_before_dedup, len(candidates), filtered_segments)
+                
+                if candidates_before_dedup > len(candidates):
+                    logger.info(f"🔧 模块 {module} 去重过滤: {candidates_before_dedup} -> {len(candidates)} 个候选片段")
+                
+                               # 🚫 【已重构】旧的分类逻辑已在 `VideoSegmentMapper` 和全局排除中统一处理，此处不再需要。
+                # from modules.mapper import VideoSegmentMapper
+                # mapper = VideoSegmentMapper()
+                # 
+                # # 过滤掉包含排除关键词的片段
+                # filtered_candidates = []
+                # for candidate in candidates:
+                #     all_tags = candidate.get('all_tags', [])
+                #     # 检查是否应该被排除（模块级和全局级）
+                #     should_exclude = False
+                #     if all_tags:
+                #         # 使用分类器的排除逻辑进行检查
+                #         classification_result = mapper.classify_segment_by_tags(all_tags)
+                #         # 如果当前模块分类失败，可能是被排除关键词过滤了
+                #         if not classification_result:
+                #             should_exclude = True
+                #             logger.debug(f"🚫 片段可能被排除关键词过滤: {candidate.get('file_name', 'unknown')} - 标签: {all_tags}")
+                #         # 如果分类结果与目标模块不匹配，也排除
+                #         elif classification_result != module:
+                #             should_exclude = True
+                #             logger.debug(f"🚫 片段分类不匹配: {candidate.get('file_name', 'unknown')} - 期望:{module}, 实际:{classification_result}")
+                #     if not should_exclude:
+                #         filtered_candidates.append(candidate)
+                # candidates = filtered_candidates
+                # logger.info(f"🔍 模块 {module} 过滤后剩余候选片段: {len(candidates)} 个")
+        
                 # 🔧 如果没有有效时长的片段，尝试使用零时长片段（赋予默认时长）
                 if not candidates and zero_duration_segments:
                     logger.warning(f"⚠️ 模块 {module} 没有有效时长片段，使用零时长片段并赋予默认时长")
                     candidates = []
                     for segment in zero_duration_segments:
-                        # 创建片段副本并赋予默认时长
-                        segment_copy = segment.copy()
-                        segment_copy['duration'] = 3.0  # 默认3秒
-                        segment_copy['is_default_duration'] = True
-                        candidates.append(segment_copy)
-                        logger.debug(f"   为片段 {segment.get('file_name', 'unknown')} 赋予默认时长3秒")
+                        segment_id = self._get_unique_segment_identifier(segment)
+                        # 🔧 检查零时长片段是否也已被选择
+                        if segment_id not in used_segment_ids:
+                            # 创建片段副本并赋予默认时长
+                            segment_copy = segment.copy()
+                            segment_copy['duration'] = 3.0  # 默认3秒
+                            segment_copy['is_default_duration'] = True
+                            candidates.append(segment_copy)
+                            logger.debug(f"   为片段 {segment.get('file_name', 'unknown')} 赋予默认时长3秒")
                 
                 # 按综合质量分排序（质量分 * 置信度）
                 candidates.sort(
@@ -171,7 +302,17 @@ class VideoComposer:
                     reverse=True
                 )
                 
-                logger.info(f"🎯 模块 {module} 候选片段: {len(candidates)} 个")
+                logger.info(f"🎯 模块 {module} 最终候选片段: {len(candidates)} 个")
+                
+                # 打印前5个候选片段的详细信息
+                if candidates:
+                    logger.info(f"🔍 模块 {module} 候选片段详情 (前5个):")
+                    for idx, candidate in enumerate(candidates[:5]):
+                        segment_id = self._get_unique_segment_identifier(candidate)
+                        file_name = candidate.get('file_name', 'unknown')
+                        duration = candidate.get('duration', 0)
+                        quality = candidate.get('combined_quality', 0)
+                        logger.info(f"   [{idx+1}] {file_name} (ID: {segment_id}, 时长: {duration:.1f}s, 质量: {quality:.2f})")
                 
                 # 🚀 选择算法：根据模式选择不同策略
                 selected = []
@@ -186,8 +327,11 @@ class VideoComposer:
                     # 🔧 从配置文件读取最大片段数限制
                     max_segments_limit = self._get_max_segments_per_module()
                     
+                    logger.info(f"🎯 模块 {module} 选择策略: 可用时长 {total_available:.1f}s vs 目标时长 {target_duration:.1f}s")
+                    
                     if total_available >= target_duration:
                         # 最优化选择：使用背包算法找最优组合
+                        logger.info(f"🎯 使用最优选择算法 (最大片段数: {max_segments_limit})")
                         selected = self._select_optimal_segments(candidates, target_duration, max_segments=max_segments_limit)
                         total_duration = sum(s.get('duration', 0) for s in selected)
                         logger.info(f"✅ 使用最优选择算法，覆盖率: {total_duration/target_duration*100:.1f}%")
@@ -196,6 +340,27 @@ class VideoComposer:
                         selected = candidates[:max_segments_limit]  # 使用配置的最大片段数
                         total_duration = sum(s.get('duration', 0) for s in selected)
                         logger.warning(f"⚠️ 片段时长不足，使用前{len(selected)}个片段（最多{max_segments_limit}个），覆盖率: {total_duration/target_duration*100:.1f}%")
+                
+                # 🔧 核心修复：将选中的片段添加到已使用集合中
+                logger.info(f"🔒 模块 {module} 将 {len(selected)} 个片段标记为已使用:")
+                logger.info(f"🔒 已使用集合更新前: {sorted(list(used_segment_ids))}")
+                
+                for idx, segment in enumerate(selected):
+                    segment_id = self._get_unique_segment_identifier(segment)
+                    file_name = segment.get('file_name', 'unknown')
+                    duration = segment.get('duration', 0)
+                    
+                    # 🔧 重要：检查是否已存在（理论上不应该存在，如果存在说明去重有问题）
+                    if segment_id in used_segment_ids:
+                        logger.error(f"   ❌ [{idx+1}] 发现重复！片段ID已存在: {file_name} (ID: {segment_id})")
+                    else:
+                        used_segment_ids.add(segment_id)
+                        logger.info(f"   🔒 [{idx+1}] 添加: {file_name} (ID: {segment_id}, 时长: {duration:.1f}s)")
+                    
+                    detail_logger.log_segment_selection_detail(module, segment, True, "最终选中")
+                
+                logger.info(f"🔒 已使用集合更新后: {sorted(list(used_segment_ids))}")
+                logger.info(f"🔒 已使用集合大小: {len(used_segment_ids)}")
             
             # 保存选择结果
             selection_result["selected_segments"][module] = selected
@@ -219,7 +384,96 @@ class VideoComposer:
                 f"片段数{len(selected)}/{len(valid_duration_segments)}, 覆盖率{total_duration/target_duration*100:.1f}%"
             )
         
+        # 🔧 添加去重统计信息
+        logger.info(f"🔧 全局去重统计: 共使用 {len(used_segment_ids)} 个唯一片段")
+        logger.info(f"🔧 最终已使用片段ID列表: {sorted(used_segment_ids)}")
+        
+        # 🔧 验证是否有重复选择
+        all_selected_segments = []
+        for module, segments in selection_result["selected_segments"].items():
+            for segment in segments:
+                segment_id = self._get_unique_segment_identifier(segment)
+                all_selected_segments.append((module, segment_id, segment.get('file_name', 'unknown')))
+        
+        # 检查重复
+        seen_ids = set()
+        duplicates = []
+        for module, segment_id, file_name in all_selected_segments:
+            if segment_id in seen_ids:
+                duplicates.append((module, segment_id, file_name))
+            else:
+                seen_ids.add(segment_id)
+        
+        if duplicates:
+            logger.error(f"❌ 检测到重复选择的片段:")
+            duplicate_info = []
+            for module, segment_id, file_name in duplicates:
+                logger.error(f"   模块 {module}: {file_name} (ID: {segment_id})")
+                duplicate_info.append({
+                    "segment_name": file_name,
+                    "segment_id": segment_id,
+                    "modules": [module]  # 这里可以进一步完善，找到所有使用该片段的模块
+                })
+            detail_logger.log_final_verification(len(all_selected_segments), len(seen_ids), duplicate_info)
+        else:
+            logger.info(f"✅ 验证通过: 无重复选择的片段")
+            detail_logger.log_final_verification(len(all_selected_segments), len(seen_ids), [])
+        
         return selection_result
+    
+    def _get_unique_segment_identifier(self, segment: Dict[str, Any]) -> str:
+        """
+        获取片段的唯一标识符，用于去重
+        
+        Args:
+            segment: 片段字典
+            
+        Returns:
+            str: 唯一标识符
+        """
+        # 🔧 强化版本：构建更稳定的唯一标识符
+        
+        # 优先使用segment_id
+        segment_id = segment.get('segment_id')
+        if segment_id and str(segment_id).strip():
+            return str(segment_id).strip()
+        
+        # 其次使用完整路径
+        file_path = segment.get('file_path')
+        if file_path and str(file_path).strip():
+            return str(file_path).strip()
+        
+        # 使用 video_id + file_name 组合 (最常用的组合)
+        video_id = segment.get('video_id', '').strip()
+        file_name = segment.get('file_name', '') or segment.get('filename', '')
+        if file_name:
+            file_name = str(file_name).strip()
+            if video_id:
+                return f"{video_id}::{file_name}"
+            else:
+                return f"no_video_id::{file_name}"
+        
+        # 🔧 加强：使用多个字段组合确保唯一性
+        start_time = segment.get('start_time', 0)
+        end_time = segment.get('end_time', 0) 
+        duration = segment.get('duration', 0)
+        
+        # 构建基于内容的稳定标识符
+        content_parts = [
+            str(video_id) if video_id else 'unknown_video',
+            str(file_name) if file_name else 'unknown_file',
+            f"start_{start_time}",
+            f"end_{end_time}",
+            f"dur_{duration}"
+        ]
+        
+        content_identifier = "::".join(content_parts)
+        
+        # 使用稳定的哈希
+        import hashlib
+        stable_hash = hashlib.md5(content_identifier.encode('utf-8')).hexdigest()[:8]
+        
+        return f"generated_{stable_hash}::{content_identifier[:50]}"
     
     def _select_optimal_segments(self, candidates: List[Dict], target_duration: float, max_segments: int = 3) -> List[Dict]:
         """
@@ -2116,6 +2370,7 @@ class VideoComposer:
         
         # 按固定顺序处理每个模块
         used_segment_ids = set()
+        logger.info("🔧 启用固定序列全局去重机制，防止片段重复选择")
         
         for i, module in enumerate(self.four_modules):
             target_duration = target_durations[i]

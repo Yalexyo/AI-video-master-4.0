@@ -11,8 +11,8 @@ from pathlib import Path
 import logging
 
 # 导入配置
-from streamlit_app.config.factory_config import FactoryConfig
-from streamlit_app.utils.factory.transcription_utils import validate_transcription_dependencies
+from config.factory_config import FactoryConfig
+from utils.factory.transcription_utils import validate_transcription_dependencies
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def get_preset_vocabulary_info(preset_hotword_id: str) -> Dict[str, Any]:
         词汇表信息字典
     """
     try:
-        from streamlit_app.modules.ai_analyzers.dashscope_audio_analyzer import DashScopeAudioAnalyzer
+        from modules.ai_analyzers.dashscope_audio_analyzer import DashScopeAudioAnalyzer
         
         analyzer = DashScopeAudioAnalyzer()
         if analyzer.is_available():
