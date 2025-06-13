@@ -259,22 +259,42 @@ class MixingFactory:
             self.logger.error(f"检测标杆视频SRT文件时出错: {e}")
     
     def _execute_mapping(self, sidebar_config: Dict[str, Any]) -> None:
-        """执行视频片段映射"""
+        """执行视频片段映射 - 使用AI智能分类"""
         try:
-            from modules.mapper import get_cached_mapping_results
+            st.markdown("### 🎯 AI智能分类")
+            st.info("""
+            **使用DeepSeek AI进行智能分类**
+            - 深度理解标签语义和业务含义
+            - 综合分析情绪、场景、品牌等多维度信息  
+            - 更准确的模块分类决策
+            """)
             
             video_pool_path = sidebar_config.get('video_pool_path')
             if video_pool_path:
-                with st.spinner("🔄 正在扫描视频片段库..."):
-                    mapped_segments, statistics = get_cached_mapping_results(video_pool_path)
-                    
-                    st.session_state.mapped_segments = mapped_segments
-                    st.session_state.mapping_statistics = statistics
-                    
-                    if mapped_segments:
-                        st.success(f"✅ 成功加载 {len(mapped_segments)} 个视频片段")
-                    else:
-                        st.warning("⚠️ 未找到有效的视频片段")
+                if st.button("🔄 开始AI智能扫描片段库", type="primary"):
+                    with st.spinner("🎯 正在使用DeepSeek AI智能分类扫描视频片段库..."):
+                        from modules.mapper import get_cached_mapping_results
+                        
+                        mapped_segments, statistics = get_cached_mapping_results(video_pool_path)
+                        
+                        st.session_state.mapped_segments = mapped_segments
+                        st.session_state.mapping_statistics = statistics
+                        st.session_state.classification_method = "AI智能分类"
+                        
+                        if mapped_segments:
+                            st.success(f"✅ AI智能分类成功加载 {len(mapped_segments)} 个视频片段")
+                            
+                            # 显示分类统计
+                            st.markdown("#### 📊 AI分类结果统计")
+                            stats_by_category = statistics.get('by_category', {})
+                            
+                            cols = st.columns(4)
+                            for i, (module, stats) in enumerate(stats_by_category.items()):
+                                with cols[i % 4]:
+                                    st.metric(module, stats.get('count', 0))
+                            
+                        else:
+                            st.warning("⚠️ 未找到有效的视频片段")
         
         except Exception as e:
             self.logger.error(f"映射执行失败: {e}")
