@@ -165,61 +165,66 @@ class QwenVideoAnalyzer:
     
     def _analyze_with_retry(self, video_path: str, frame_rate: float, tag_language: str, quality_threshold: float) -> Dict[str, Any]:
         """
-        🔧 带重试机制的视觉分析
+        🔧 带重试机制的视觉分析（新增双模型分工机制）
         """
         max_retry = self.quality_config['max_retry_count']
         
         for attempt in range(max_retry + 1):
             try:
-                # 选择提示词（重试时使用增强版）
-                if attempt == 0:
-                    prompt = self._build_professional_prompt(tag_language)
-                else:
-                    prompt = self._build_enhanced_retry_prompt(tag_language)
-                    logger.info(f"🔄 第{attempt}次重试，使用增强提示词")
+                # 🎯 第一阶段：通用物体识别（AI-B）
+                general_prompt = self._build_general_detection_prompt(tag_language)
+                general_result = self._analyze_video_file(video_path, frame_rate, general_prompt)
                 
-                # 执行分析
-                visual_result = self._analyze_video_file(video_path, frame_rate, prompt)
-                
-                if visual_result and 'analysis' in visual_result:
-                    # 解析结果
-                    analysis_result = self._parse_analysis_result(
-                        visual_result['analysis'], tag_language
+                if general_result and 'analysis' in general_result:
+                    # 解析通用识别结果
+                    general_analysis = self._parse_analysis_result(
+                        general_result['analysis'], tag_language
                     )
                     
+                    # 🎯 第二阶段：品牌检测触发器
+                    if self._should_trigger_brand_detection(general_analysis):
+                        logger.info("🔍 检测到产品相关物体，启动ATWO品牌专用检测...")
+                        brand_result = self._detect_atwo_brand(video_path, frame_rate)
+                        if brand_result:
+                            general_analysis['brand_elements'] = brand_result
+                        logger.info(f"🎯 品牌检测完成，结果: {brand_result or '未检测到ATWO'}")
+                    else:
+                        # 非产品相关场景，确保brand_elements为空
+                        general_analysis['brand_elements'] = ""
+                    
                     # 应用负面关键词过滤
-                    analysis_result = self._apply_negative_keywords_filter(analysis_result)
+                    general_analysis = self._apply_negative_keywords_filter(general_analysis)
                     
-                    analysis_result["success"] = True
-                    analysis_result["quality_score"] = visual_result.get('quality_score', 0.8)
-                    analysis_result["analysis_method"] = "visual"
-                    analysis_result["retry_count"] = attempt
+                    general_analysis["success"] = True
+                    general_analysis["quality_score"] = general_result.get('quality_score', 0.8)
+                    general_analysis["analysis_method"] = "dual_model_workflow"
+                    general_analysis["retry_count"] = attempt
                     
-                    # 🎯 NEW: 检测人脸特写
-                    face_close_up_detected = self._detect_face_close_up(analysis_result, video_path)
+                    # 检测人脸特写
+                    face_close_up_detected = self._detect_face_close_up(general_analysis, video_path)
                     if face_close_up_detected:
                         logger.warning(f"🚫 检测到人脸特写片段，标记为不可用: {video_path}")
-                        analysis_result["is_face_close_up"] = True
-                        analysis_result["unusable"] = True
-                        analysis_result["unusable_reason"] = "人脸特写片段"
+                        general_analysis["is_face_close_up"] = True
+                        general_analysis["unusable"] = True
+                        general_analysis["unusable_reason"] = "人脸特写片段"
                         # 降低质量分，确保在匹配时被过滤
-                        analysis_result["quality_score"] = 0.1
+                        general_analysis["quality_score"] = 0.1
                     else:
-                        analysis_result["is_face_close_up"] = False
-                        analysis_result["unusable"] = False
+                        general_analysis["is_face_close_up"] = False
+                        general_analysis["unusable"] = False
                     
                     # 检查质量
-                    if analysis_result["quality_score"] >= quality_threshold:
-                        logger.info(f"✅ 分析成功，质量分: {analysis_result['quality_score']:.2f}")
-                        return analysis_result
+                    if general_analysis["quality_score"] >= quality_threshold:
+                        logger.info(f"✅ 分析成功，质量分: {general_analysis['quality_score']:.2f}")
+                        return general_analysis
                     elif attempt < max_retry:
-                        logger.warning(f"⚠️ 质量分过低 ({analysis_result['quality_score']:.2f})，准备重试...")
+                        logger.warning(f"⚠️ 质量分过低 ({general_analysis['quality_score']:.2f})，准备重试...")
                         continue
                     else:
                         # 最后一次重试，进行后处理优化
-                        analysis_result = self._enhance_poor_result(analysis_result, video_path)
-                        logger.info(f"🔧 应用后处理优化，最终质量分: {analysis_result['quality_score']:.2f}")
-                        return analysis_result
+                        general_analysis = self._enhance_poor_result(general_analysis, video_path)
+                        logger.info(f"🔧 应用后处理优化，最终质量分: {general_analysis['quality_score']:.2f}")
+                        return general_analysis
                 else:
                     if attempt < max_retry:
                         logger.warning(f"⚠️ 分析返回空结果，准备重试...")
@@ -2318,26 +2323,149 @@ confidence: 0.9
     
     def _remove_milk_related_objects(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        🚫 移除奶粉相关的object标签
+        从object字段中移除奶制品相关的关键词
         """
-        milk_related_keywords = ['奶粉', '奶瓶', '奶粉罐', '配方奶', '配方', '奶粉勺']
-        
-        # 处理object字段
-        if result.get('object'):
-            object_tags = [tag.strip() for tag in result['object'].split(',') if tag.strip()]
-            filtered_objects = []
+        try:
+            object_value = result.get('object', '')
+            if not object_value:
+                return result
             
-            for tag in object_tags:
-                # 检查是否包含奶粉相关关键词
-                is_milk_related = any(milk_keyword in tag for milk_keyword in milk_related_keywords)
-                if is_milk_related:
-                    logger.info(f"🚫 移除奶粉相关标签: '{tag}'")
-                else:
-                    filtered_objects.append(tag)
+            # 奶制品相关关键词
+            milk_keywords = ['奶粉罐', '奶瓶', '奶粉', '奶制品', '配方奶', '母乳', '牛奶', '奶粉包装']
             
-            result['object'] = ', '.join(filtered_objects) if filtered_objects else ""
+            # 分割并过滤
+            object_list = [obj.strip() for obj in str(object_value).split(',') if obj.strip()]
+            filtered_objects = [obj for obj in object_list if not any(keyword in obj for keyword in milk_keywords)]
+            
+            result['object'] = ','.join(filtered_objects) if filtered_objects else ''
+            
+            if filtered_objects != object_list:
+                logger.info(f"已移除奶制品相关物体: {[obj for obj in object_list if obj not in filtered_objects]}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"移除奶制品相关物体时出错: {e}")
+            return result
+
+    # ===============================
+    # 双模型分工机制 - 新增方法
+    # ===============================
+
+    def _build_general_detection_prompt(self, tag_language: str) -> str:
+        """
+        构建AI-B通用检测prompt（不涉及品牌，专注object/scene/emotion）
+        """
+        try:
+            from utils.keyword_config import get_visual_objects, get_scenes, get_emotions
+            
+            objects = get_visual_objects()[:15]  # 取前15个常见物体
+            scenes = get_scenes()[:10]   # 取前10个常见场景
+            emotions = get_emotions()[:6]  # 取前6个情绪
+            
+            # 确保有默认值
+            if not objects: objects = ["宝宝", "玩具", "餐具", "衣服"]
+            if not scenes: scenes = ["室内", "家中卧室", "客厅"]
+            if not emotions: emotions = ["开心", "温馨", "平静"]
+            
+            return f"""🎯 你是专业的视频内容分析师，请客观识别画面中的物体、场景和情绪。
+
+**重要：本次分析不涉及任何品牌识别，请专注于以下三个维度：**
+
+1. **object（物体识别）**：客观识别画面中的具体物体
+   参考词汇：{', '.join(objects)}
+
+2. **scene（场景识别）**：客观描述画面发生的场景环境
+   参考词汇：{', '.join(scenes)}
+
+3. **emotion（情绪识别）**：分析画面传达的情感氛围
+   参考词汇：{', '.join(emotions)}
+
+**输出格式（严格遵循）：**
+object: 词1,词2
+scene: 词1,词2  
+emotion: 词1,词2"""
+
+        except Exception as e:
+            logger.warning(f"构建通用检测prompt失败，使用兜底版本: {e}")
+            return """请客观分析画面中的物体、场景和情绪，不要包含任何品牌信息。
+输出格式：
+object: 物体1,物体2
+scene: 场景1,场景2
+emotion: 情绪1,情绪2"""
+
+    def _should_trigger_brand_detection(self, general_analysis: Dict[str, Any]) -> bool:
+        """
+        判断是否需要触发品牌检测（AI-A）
+        """
+        # 产品相关关键词
+        product_keywords = [
+            '奶粉罐', '奶瓶', '奶粉', '配方奶', '婴儿奶粉', 
+            '奶粉包装', '奶粉罐特写', '成分表', '配料表',
+            '营养成分', '产品包装', '包装盒'
+        ]
         
-        # 更新all_tags字段
-        result['all_tags'] = self._rebuild_tags(result)
+        # 检查object字段
+        object_text = str(general_analysis.get('object', '')).lower()
+        scene_text = str(general_analysis.get('scene', '')).lower()
         
-        return result
+        # 任何一个字段包含产品相关关键词就触发
+        combined_text = f"{object_text} {scene_text}"
+        
+        for keyword in product_keywords:
+            if keyword in combined_text:
+                logger.info(f"触发品牌检测：检测到关键词 '{keyword}'")
+                return True
+        
+        return False
+
+    def _detect_atwo_brand(self, video_path: str, frame_rate: float) -> str:
+        """
+        AI-A专用ATWO品牌检测
+        """
+        try:
+            brand_prompt = self._build_atwo_detection_prompt()
+            result = self._analyze_video_file(video_path, frame_rate, brand_prompt)
+            
+            if result and 'analysis' in result:
+                # 解析品牌检测结果
+                analysis_text = result['analysis'].lower()
+                
+                # 严格检查ATWO相关标识
+                atwo_indicators = ['atwo', 'a-two', 'a2蛋白', '成分表', '配料表']
+                
+                for indicator in atwo_indicators:
+                    if indicator in analysis_text:
+                        # 进一步验证是否在奶粉罐特写场景
+                        if any(scene in analysis_text for scene in ['特写', '近景', '罐体', '包装']):
+                            logger.info(f"✅ ATWO品牌检测成功：发现 '{indicator}' 在合适场景中")
+                            return "ATWO"
+                
+                logger.info("🔍 未在合适场景中检测到ATWO标识")
+                return ""
+            
+            return ""
+            
+        except Exception as e:
+            logger.error(f"ATWO品牌检测失败: {e}")
+            return ""
+
+    def _build_atwo_detection_prompt(self) -> str:
+        """
+        构建AI-A专用的ATWO品牌检测prompt
+        """
+        return """🔍 你是品牌识别专家，请专门检查画面中是否有ATWO品牌标识。
+
+**检查重点：**
+1. 奶粉罐包装上的"ATWO"字样或Logo
+2. 产品成分表或配料表中的"ATWO"标识  
+3. 包装正面的品牌名称区域
+
+**严格要求：**
+- 只有在奶粉罐特写或包装近景中清晰可见"ATWO"字样时，才确认检测到ATWO
+- 如果画面模糊、角度不佳或无法确认，请输出"未检测到"
+
+**输出格式：**
+如果检测到ATWO：输出"检测到ATWO品牌标识"
+如果未检测到：输出"未检测到ATWO标识"
+"""

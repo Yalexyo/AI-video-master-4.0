@@ -854,12 +854,39 @@ def render_vocabulary_management():
         vocab = config_manager.get_ai_vocabulary()
         st.json({k: list(v) for k, v in vocab.items()})
 
-        # Qwen视觉分析Prompt
+        # 🎯 双模型分工机制预览
         from modules.ai_analyzers.qwen_video_analyzer import QwenVideoAnalyzer
         analyzer = QwenVideoAnalyzer()
-        prompt = analyzer._get_fallback_visual_prompt() # 调用重构后的方法
-        st.text_area("Qwen视觉分析Prompt预览", prompt, height=600)
+        
+        st.markdown("### 🤖 双模型分工机制")
+        st.info("💡 **新架构**：AI-B负责通用识别，AI-A仅在检测到产品时进行品牌专检")
+        
+        # AI-B 通用检测Prompt
+        st.markdown("#### 🎯 AI-B: 通用物体/场景/情绪识别")
+        general_prompt = analyzer._build_general_detection_prompt("中文")
+        st.text_area("AI-B通用检测Prompt", general_prompt, height=400)
+        
+        # AI-A 品牌专检Prompt
+        st.markdown("#### 🔍 AI-A: ATWO品牌专用检测（条件触发）")
+        brand_prompt = analyzer._build_atwo_detection_prompt()
+        st.text_area("AI-A品牌专检Prompt", brand_prompt, height=300)
+        
+        # 触发条件说明
+        st.markdown("#### ⚡ 触发机制")
+        st.code("""
+触发条件：AI-B识别结果中包含以下产品关键词时，才会调用AI-A
+产品关键词：['奶粉罐', '奶瓶', '奶粉', '配方奶', '婴儿奶粉', 
+           '奶粉包装', '奶粉罐特写', '成分表', '配料表',
+           '营养成分', '产品包装', '包装盒']
 
+调用流程：
+1. AI-B 通用识别 → object, scene, emotion
+2. 检查是否包含产品关键词
+3. [如果是] AI-A 品牌专检 → brand_elements
+4. [如果否] brand_elements = ""
+        """)
+
+        st.markdown("---")
         # DeepSeek音频分析Prompt（标签生成兜底）
         from utils.keyword_config import get_deepseek_audio_prompt_for_labeling, get_deepseek_audio_prompt_for_mapping
         deepseek_labeling_prompt = get_deepseek_audio_prompt_for_labeling()
