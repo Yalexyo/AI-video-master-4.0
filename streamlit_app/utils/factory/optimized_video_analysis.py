@@ -290,7 +290,7 @@ class HighEfficiencyVideoAnalyzer:
         segment_file: Path,
         params: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """🎯 优化的Qwen分析"""
+        """🎯 优化的Qwen分析 - 支持双模型分工和品牌检测"""
         try:
             from modules.ai_analyzers import QwenVideoAnalyzer
             
@@ -298,7 +298,7 @@ class HighEfficiencyVideoAnalyzer:
             if not analyzer.is_available():
                 return None
             
-            # 使用优化参数
+            # 🎯 使用新版本的双模型分工机制
             result = analyzer.analyze_video_segment(
                 video_path=str(segment_file),
                 tag_language="中文",
@@ -310,19 +310,23 @@ class HighEfficiencyVideoAnalyzer:
                 estimated_tokens = self._estimate_tokens_used(segment_file, params)
                 self.stats["total_tokens"] += estimated_tokens
                 
+                # 🔧 修复：正确处理字段映射，保持与新版本一致
                 return {
                     'file_name': segment_file.name,
                     'file_path': str(segment_file),
                     'file_size': segment_file.stat().st_size / (1024*1024),
-                    'model': 'Qwen2.5-Optimized',
-                    'object': result.get('object', '无'),
-                    'scene': result.get('scene', '无'),
-                    'emotion': result.get('emotion', '无'),
-                    'brand_elements': result.get('brand_elements', '无'),
+                    'model': 'Qwen-VL-Max-Latest',
+                    # 🎯 支持新的字段结构
+                    'object': result.get('object', result.get('interaction', '')),  # 兼容新的interaction字段
+                    'scene': result.get('scene', ''),
+                    'emotion': result.get('emotion', ''),
+                    'brand_elements': result.get('brand_elements', ''),  # 🔧 关键：不使用默认值'无'
                     'confidence': result.get('confidence', 0.0),
                     'success': True,
                     'analysis_params': params,
-                    'estimated_tokens': estimated_tokens
+                    'estimated_tokens': estimated_tokens,
+                    # 🎯 保留分析方法信息
+                    'analysis_strategy': result.get('analysis_method', 'Qwen完整分析')
                 }
             
             return None
@@ -336,24 +340,52 @@ class HighEfficiencyVideoAnalyzer:
         segment_file: Path,
         params: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """🧠 优化的智能策略分析"""
+        """🧠 优化的智能策略分析 - 使用新版本双模型分工机制"""
         
-        # 先尝试Qwen
-        qwen_result = self._analyze_with_qwen_optimized(segment_file, params)
-        
-        if qwen_result and self._is_result_sufficient(qwen_result):
-            qwen_result['analysis_strategy'] = 'Qwen完整分析'
-            return qwen_result
-        
-        # 如果Qwen结果不足，使用DeepSeek兜底
-        # 这里可以实现实际的DeepSeek调用
-        # 目前返回增强的Qwen结果
-        if qwen_result:
-            enhanced_result = self._enhance_insufficient_result(qwen_result)
-            enhanced_result['analysis_strategy'] = 'Qwen + 智能增强'
-            return enhanced_result
-        
-        return None
+        # 🎯 直接使用QwenVideoAnalyzer的智能策略，它已经包含了双模型分工和品牌检测
+        try:
+            from modules.ai_analyzers import QwenVideoAnalyzer
+            
+            analyzer = QwenVideoAnalyzer()
+            if not analyzer.is_available():
+                return None
+            
+            # 🎯 使用新版本的智能策略（包含双模型分工和品牌检测）
+            result = analyzer.analyze_video_segment(
+                video_path=str(segment_file),
+                tag_language="中文",
+                frame_rate=params["frame_rate"]
+            )
+            
+            if result and result.get("success"):
+                # 估算token使用
+                estimated_tokens = self._estimate_tokens_used(segment_file, params)
+                self.stats["total_tokens"] += estimated_tokens
+                
+                # 🔧 修复：正确处理字段映射，保持与新版本一致
+                return {
+                    'file_name': segment_file.name,
+                    'file_path': str(segment_file),
+                    'file_size': segment_file.stat().st_size / (1024*1024),
+                    'model': 'Qwen-VL-Max-Latest',
+                    # 🎯 支持新的字段结构
+                    'object': result.get('object', result.get('interaction', '')),  # 兼容新的interaction字段
+                    'scene': result.get('scene', ''),
+                    'emotion': result.get('emotion', ''),
+                    'brand_elements': result.get('brand_elements', ''),  # 🔧 关键：不使用默认值'无'
+                    'confidence': result.get('confidence', 0.0),
+                    'success': True,
+                    'analysis_params': params,
+                    'estimated_tokens': estimated_tokens,
+                    # 🎯 保留分析方法信息
+                    'analysis_strategy': result.get('analysis_method', 'Qwen完整分析')
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"智能策略优化分析失败: {e}")
+            return None
     
     def _is_result_sufficient(self, result: Dict[str, Any]) -> bool:
         """判断分析结果是否充分"""

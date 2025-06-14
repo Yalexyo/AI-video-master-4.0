@@ -48,7 +48,7 @@ class VideoSegmentMapper:
         try:
             cmd = ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', file_path]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True)
-                data = json.loads(result.stdout)
+            data = json.loads(result.stdout)
             return float(data['format']['duration'])
         except Exception as e:
             logger.error(f"获取视频时长失败: {str(e)}")
@@ -177,11 +177,11 @@ class VideoSegmentMapper:
         
         log_reason = "AI分类成功" if category != "其他" else "AI分类无法确定类别"
         
-            selection_logger.log_step(
-            step_type="ai_classification", 
-                input_tags=all_tags,
-                result=category
-            )
+        selection_logger.log_step(
+            step_type="ai_classification",
+            input_tags=all_tags,
+            result=category
+        )
         
         selection_logger.log_final_result(
             final_category=category,
@@ -239,15 +239,15 @@ class VideoSegmentMapper:
                             all_tags = []
                             for raw_field in raw_fields:
                                 if raw_field:
-                                if ',' in raw_field:
-                                    tags = raw_field.split(',')
-                                else:
-                                    tags = [raw_field]
+                                    if ',' in raw_field:
+                                        tags = raw_field.split(',')
+                                    else:
+                                        tags = [raw_field]
                                 
-                                for tag in tags:
-                                    clean_tag = tag.strip()
-                                    if clean_tag and clean_tag not in all_tags:
-                                        all_tags.append(clean_tag)
+                                    for tag in tags:
+                                        clean_tag = tag.strip()
+                                        if clean_tag and clean_tag not in all_tags:
+                                            all_tags.append(clean_tag)
                             
                         if not all_tags:
                             continue

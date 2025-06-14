@@ -181,7 +181,7 @@ def _analyze_segments_with_qwen_standard(
                         'file_name': segment_name,
                         'file_path': str(segment_file),
                         'file_size': segment_file.stat().st_size / (1024*1024),
-                        'model': 'Qwen2.5',
+                        'model': 'Qwen-VL-Max-Latest',
                         'object': analysis_result.get('object', '无'),
                         'scene': analysis_result.get('scene', '无'),
                         'emotion': analysis_result.get('emotion', '无'),

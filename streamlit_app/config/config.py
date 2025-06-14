@@ -13,10 +13,25 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 # 用户自定义配置文件路径
 USER_CONFIG_FILE = os.path.join(ROOT_DIR, "data", "user_config.json")
 
-# 设置日志
-logging.basicConfig(level=logging.INFO,
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+# 详细日志设置
+log_file_path = os.path.join(ROOT_DIR, 'app.log')
+
+# 清理旧的处理器，避免重复添加
+root_logger = logging.getLogger()
+if root_logger.handlers:
+    for handler in root_logger.handlers:
+        root_logger.removeHandler(handler)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file_path, mode='w', encoding='utf-8'), # 写入文件
+        logging.StreamHandler() # 输出到控制台
+    ]
+)
 logger = logging.getLogger(__name__)
+logger.info(f"日志将记录到: {log_file_path}")
 
 # 默认配置（作为备选）
 DEFAULT_TARGET_GROUPS = [

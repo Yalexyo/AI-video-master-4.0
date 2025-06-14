@@ -63,7 +63,7 @@ class QwenVideoAnalyzer:
             
         # 🔧 优化的模型参数配置
         self.model_config = {
-            'model': 'qwen-vl-plus-latest',  # 使用最新模型
+            'model': 'qwen-vl-max-latest',   # 使用最新最强模型
             'temperature': 0.1,              # 降低随机性
             'top_p': 0.8,                   # 控制生成质量
             'max_tokens': 1500,             # 增加输出长度
@@ -181,13 +181,19 @@ class QwenVideoAnalyzer:
                         general_result['analysis'], tag_language
                     )
                     
+                    # 🕵️‍♂️ [侦查日志] 打印通用识别结果
+                    logger.info("🕵️‍♂️ [侦查日志] ====== 通用识别阶段 (AI-B) ======")
+                    logger.info(f"   - 原始返回: {general_result['analysis']}")
+                    logger.info(f"   - 解析后: {general_analysis}")
+                    logger.info("🕵️‍♂️ =======================================")
+                    
                     # 🎯 第二阶段：品牌检测触发器
                     if self._should_trigger_brand_detection(general_analysis):
-                        logger.info("🔍 检测到产品相关物体，启动ATWO品牌专用检测...")
-                        brand_result = self._detect_atwo_brand(video_path, frame_rate)
+                        logger.info("🔍 检测到产品相关物体，启动核心品牌检测...")
+                        brand_result = self._detect_core_brands(video_path, frame_rate)
                         if brand_result:
                             general_analysis['brand_elements'] = brand_result
-                        logger.info(f"🎯 品牌检测完成，结果: {brand_result or '未检测到ATWO'}")
+                        logger.info(f"🎯 品牌检测完成，结果: {brand_result or '未检测到核心品牌'}")
                     else:
                         # 非产品相关场景，确保brand_elements为空
                         general_analysis['brand_elements'] = ""
@@ -783,7 +789,8 @@ confidence: 0.9
         
         try:
             result = {
-                'object': '',
+                'interaction': '', # 新增
+                'object': '',      # 保留
                 'scene': '', 
                 'emotion': '',
                 'brand_elements': '',
@@ -892,83 +899,23 @@ confidence: 0.9
                                 logger.debug(f"提取confidence: '{confidence_text}' -> {result['confidence']}")
                         except:
                             result['confidence'] = 0.8
-            else:
-                # 格式2：简单文本格式 - 智能解析逗号分隔的内容
-                logger.info("🔧 检测到简单文本格式，启用智能解析")
-                full_text = analysis_text.replace('\n', ' ').strip()
-                
-                # 分割为tokens
-                tokens = [token.strip() for token in full_text.split('、') if token.strip()]
-                if not tokens:
-                    tokens = [token.strip() for token in full_text.split(',') if token.strip()]
-                
-                # 智能分类配置
-                from utils.keyword_config import get_keyword_config
-                try:
-                    keywords_config = get_keyword_config()
                     
-                    # 获取配置词汇 - 使用正确的配置结构
-                    from utils.keyword_config import get_visual_objects, get_scenes, get_emotions, get_brands
-                    
-                    visual_objects = get_visual_objects()
-                    visual_scenes = get_scenes() 
-                    emotions = get_emotions()
-                    brands = get_brands()
-                    
-                    # 智能分类
-                    detected_objects = []
-                    detected_scenes = []
-                    detected_emotions = []
-                    detected_brands = []
-                    
-                    for token in tokens:
-                        cleaned_token = clean_field_value(token)
-                        if not cleaned_token:
-                            continue
-                            
-                        # 品牌优先级最高
-                        if any(brand.lower() in cleaned_token.lower() for brand in brands):
-                            detected_brands.append(cleaned_token)
-                        # 情绪匹配
-                        elif any(emotion in cleaned_token for emotion in emotions):
-                            detected_emotions.append(cleaned_token)
-                        # 场景匹配
-                        elif any(scene in cleaned_token for scene in visual_scenes):
-                            detected_scenes.append(cleaned_token)
-                        # 物体匹配
-                        elif any(obj in cleaned_token for obj in visual_objects):
-                            detected_objects.append(cleaned_token)
-                        else:
-                            # 兜底：根据关键词特征判断
-                            if any(keyword in cleaned_token for keyword in ['奶粉', '奶瓶', '宝宝', '妈妈', '婴儿', '用品']):
-                                detected_objects.append(cleaned_token)
-                            elif any(keyword in cleaned_token for keyword in ['厨房', '客厅', '户外', '公园', '医院', '游乐场']):
-                                detected_scenes.append(cleaned_token)
-                    
-                    # 填充结果 - 🔧 增强数字污染清理
-                    result['object'] = ','.join(detected_objects) if detected_objects else ''
-                    result['scene'] = ','.join(detected_scenes) if detected_scenes else ''
-                    result['emotion'] = ','.join(detected_emotions) if detected_emotions else ''
-                    # 🔧 特殊处理品牌：过滤数字污染
-                    clean_brands = [brand for brand in detected_brands if brand and not re.match(r'^[0-9]+\.?[0-9]*$', brand)]
-                    result['brand_elements'] = ','.join(clean_brands) if clean_brands else ''
-                    
-                    logger.info(f"🔧 智能解析结果:")
-                    logger.info(f"   原始tokens: {tokens}")
-                    logger.info(f"   物体: {detected_objects}")
-                    logger.info(f"   场景: {detected_scenes}")
-                    logger.info(f"   情绪: {detected_emotions}")
-                    logger.info(f"   品牌: {detected_brands}")
-                    
-                except Exception as e:
-                    logger.warning(f"智能解析失败，使用兜底策略: {e}")
-                    # 兜底：直接将所有内容放入object字段
-                    result['object'] = clean_field_value(full_text)
+                    elif line.lower().startswith('interaction:'):
+                        raw_value = line[12:].strip()
+                        result['interaction'] = clean_field_value(raw_value)
+                        logger.debug(f"提取interaction: '{raw_value}' -> '{result['interaction']}'")
+            
+            # 为了兼容性，将interaction内容同步到object
+            if result.get('interaction'):
+                result['object'] = result['interaction']
             
             # 🔧 创建all_tags - 包含所有有意义的内容（强化数字过滤）
             all_tags = []
             for field_name, value in result.items():
                 if field_name == 'confidence':
+                    continue
+                # 兼容性：不将interaction重复添加到all_tags
+                if field_name == 'interaction':
                     continue
                 if value:  # 只要不为空就处理
                     # 分割逗号分隔的标签
@@ -1009,6 +956,7 @@ confidence: 0.9
                     result['brand_elements'] = ''
             
             logger.info(f"🎯 简化解析最终结果:")
+            logger.info(f"   交互行为: '{result.get('interaction', '')}'") # 新增日志
             logger.info(f"   物体: '{result['object']}'")
             logger.info(f"   场景: '{result['scene']}'")
             logger.info(f"   情绪: '{result['emotion']}'")
@@ -1021,6 +969,7 @@ confidence: 0.9
         except Exception as e:
             logger.error(f"解析分析结果失败: {str(e)}")
             return {
+                'interaction': '', # 新增
                 'object': '',
                 'scene': '',
                 'emotion': '',
@@ -2354,7 +2303,7 @@ confidence: 0.9
 
     def _build_general_detection_prompt(self, tag_language: str) -> str:
         """
-        构建AI-B通用检测prompt（不涉及品牌，专注object/scene/emotion）
+        构建AI-B通用检测prompt，专注"行为/交互"识别
         """
         try:
             from utils.keyword_config import get_visual_objects, get_scenes, get_emotions
@@ -2368,104 +2317,198 @@ confidence: 0.9
             if not scenes: scenes = ["室内", "家中卧室", "客厅"]
             if not emotions: emotions = ["开心", "温馨", "平静"]
             
-            return f"""🎯 你是专业的视频内容分析师，请客观识别画面中的物体、场景和情绪。
+            return f"""🎯 你是专业的视频内容分析师，请将画面内容描述为"行为/交互"短句。
 
 **重要：本次分析不涉及任何品牌识别，请专注于以下三个维度：**
 
-1. **object（物体识别）**：客观识别画面中的具体物体
-   参考词汇：{', '.join(objects)}
+1. **interaction（行为/交互）**: **核心任务**，用"主语+动词+宾语"的格式描述画面中的核心事件。
+   - **优秀示例**: "宝宝开心喝奶", "妈妈冲泡奶粉", "宝宝拒绝奶瓶", "医生推荐产品", "宝宝皮肤泛红"
+   - **避免**: "宝宝, 奶瓶" (过于孤立)
 
-2. **scene（场景识别）**：客观描述画面发生的场景环境
-   参考词汇：{', '.join(scenes)}
+2. **scene（场景识别）**: 客观描述画面发生的场景环境
+   - 参考词汇：{', '.join(scenes)}
 
-3. **emotion（情绪识别）**：分析画面传达的情感氛围
-   参考词汇：{', '.join(emotions)}
+3. **emotion（情绪识别）**: 分析并提炼出画面中最核心、最关键的一个情绪词。
+   - 参考词汇：{', '.join(emotions)}
 
 **输出格式（严格遵循）：**
-object: 词1,词2
-scene: 词1,词2  
-emotion: 词1,词2"""
+interaction: 行为/交互短句
+scene: 场景描述(可含逗号)
+emotion: 单个关键词"""
 
         except Exception as e:
             logger.warning(f"构建通用检测prompt失败，使用兜底版本: {e}")
-            return """请客观分析画面中的物体、场景和情绪，不要包含任何品牌信息。
+            return """请将画面内容描述为"行为/交互"短句。
 输出格式：
-object: 物体1,物体2
+interaction: 行为/交互短句
 scene: 场景1,场景2
 emotion: 情绪1,情绪2"""
 
     def _should_trigger_brand_detection(self, general_analysis: Dict[str, Any]) -> bool:
         """
-        判断是否需要触发品牌检测（AI-A）
+        判断是否需要触发品牌检测（AI-A），基于interaction字段
         """
-        # 产品相关关键词
-        product_keywords = [
-            '奶粉罐', '奶瓶', '奶粉', '配方奶', '婴儿奶粉', 
-            '奶粉包装', '奶粉罐特写', '成分表', '配料表',
-            '营养成分', '产品包装', '包装盒'
-        ]
-        
-        # 检查object字段
-        object_text = str(general_analysis.get('object', '')).lower()
+        # 🔧 从配置文件读取触发关键词
+        try:
+            config_manager = get_config_manager()
+            keywords_config = config_manager.get_keywords_config()
+            product_keywords = keywords_config.get('ai_brand_detection', {}).get('trigger_keywords', [])
+            
+            # 如果配置为空，使用默认关键词作为兜底
+            if not product_keywords:
+                logger.warning("未找到ai_brand_detection.trigger_keywords配置，使用默认关键词")
+                product_keywords = [
+                    # 行为/互动相关
+                    '罐', '产品', '喂养', '喝', '冲泡', '搅拌',
+                    # 传统物体相关
+                    '奶粉罐', '奶瓶', '奶粉', '配方奶', '婴儿奶粉',
+                    '奶粉包装', '奶粉罐特写', '成分表', '配料表',
+                    '营养成分', '产品包装', '包装盒'
+                ]
+            else:
+                logger.info(f"从配置文件加载品牌检测触发关键词: {product_keywords}")
+                
+        except Exception as e:
+            logger.error(f"读取品牌检测配置失败: {e}，使用默认关键词")
+            product_keywords = [
+                '罐', '产品', '喂养', '喝', '冲泡', '搅拌',
+                '奶粉罐', '奶瓶', '奶粉', '配方奶', '婴儿奶粉',
+                '奶粉包装', '奶粉罐特写', '成分表', '配料表',
+                '营养成分', '产品包装', '包装盒'
+            ]
+
+        # 检查interaction和scene字段
+        interaction_text = str(general_analysis.get('interaction', '')).lower()
+        object_text = str(general_analysis.get('object', '')).lower() # 兼容旧版object字段
         scene_text = str(general_analysis.get('scene', '')).lower()
-        
-        # 任何一个字段包含产品相关关键词就触发
-        combined_text = f"{object_text} {scene_text}"
-        
+
+        # 组合所有可能的文本来源
+        combined_text = f"{interaction_text} {object_text} {scene_text}"
+
         for keyword in product_keywords:
             if keyword in combined_text:
-                logger.info(f"触发品牌检测：检测到关键词 '{keyword}'")
+                logger.info(f"触发品牌检测：检测到关键词 '{keyword}' (来源: 配置文件)")
                 return True
-        
+
         return False
 
-    def _detect_atwo_brand(self, video_path: str, frame_rate: float) -> str:
+    def _detect_core_brands(self, video_path: str, frame_rate: float) -> str:
         """
-        AI-A专用ATWO品牌检测
+        AI-A专用核心品牌检测（新增音频兜底机制）
+        """
+        # 1. 优先尝试视觉检测
+        try:
+            brand_prompt = self._build_brand_detection_prompt()
+            logger.info("🕵️‍♂️ [侦查日志] ====== 品牌检测阶段 (AI-A) - 视觉 ======")
+            logger.info(f"   - 使用的Prompt: {brand_prompt}")
+            
+            result = self._analyze_video_file(video_path, frame_rate, brand_prompt)
+
+            if result and 'analysis' in result:
+                analysis_text = result['analysis']
+                logger.info(f"   - 品牌检测AI原始返回: '{analysis_text}'")
+
+                # 如果AI明确返回"无"，则认为视觉检测已确认无品牌，无需音频兜底
+                if any(neg in analysis_text for neg in ["无", "未检测到", "不包含", "没有"]):
+                    logger.info("   - [结论] 视觉品牌检测模型明确返回未检测到品牌。")
+                    logger.info("🕵️‍♂️ =======================================")
+                    return ""
+
+                config_manager = get_config_manager()
+                keywords_config = config_manager.get_keywords_config()
+                core_brands = keywords_config.get('ai_brand_detection', {}).get('core_brands', [])
+                if not core_brands: core_brands = ['启赋', 'illuma', '惠氏', 'Wyeth', '蕴淳', 'A2', 'ATWO', 'HMO']
+                logger.info(f"   - 核心品牌列表: {core_brands}")
+                
+                found_brands = []
+                for brand in core_brands:
+                    if re.search(r'\b' + re.escape(brand) + r'\b', analysis_text, re.IGNORECASE):
+                        found_brands.append(brand)
+                
+                if found_brands:
+                    detected_brands_str = ','.join(list(dict.fromkeys(found_brands)))
+                    logger.info(f"   - [结论] ✅ 视觉核心品牌检测成功: {detected_brands_str}")
+                    logger.info("🕵️‍♂️ =======================================")
+                    return detected_brands_str
+                else:
+                    logger.info("   - [结论] 视觉品牌检测未返回核心品牌，准备尝试音频兜底。")
+
+        except Exception as e:
+            logger.warning(f"视觉品牌检测失败: {e}, 尝试音频兜底")
+
+        # 2. 如果视觉检测失败或未找到，尝试音频兜底
+        logger.info("🎤 [侦查日志] ====== 品牌检测阶段 (AI-A) - 音频兜底 ======")
+        try:
+            transcription = self._extract_and_transcribe_audio(video_path)
+            if not transcription:
+                logger.info("   - 音频转录结果为空，无法进行品牌检测。")
+                logger.info("🎤 =======================================")
+                return ""
+
+            logger.info(f"   - 音频转录内容(片段): '{transcription[:100]}...'")
+
+            config_manager = get_config_manager()
+            keywords_config = config_manager.get_keywords_config()
+            core_brands = keywords_config.get('ai_brand_detection', {}).get('core_brands', [])
+            if not core_brands: core_brands = ['启赋', 'illuma', '惠氏', 'Wyeth', '蕴淳', 'A2', 'ATWO', 'HMO']
+            
+            found_brands = []
+            for brand in core_brands:
+                if re.search(r'\b' + re.escape(brand) + r'\b', transcription, re.IGNORECASE):
+                    found_brands.append(brand)
+            
+            if found_brands:
+                detected_brands_str = ','.join(list(dict.fromkeys(found_brands)))
+                logger.info(f"   - [结论] ✅ 音频兜底核心品牌检测成功: {detected_brands_str}")
+                logger.info("🎤 =======================================")
+                return detected_brands_str
+            else:
+                logger.info("   - [结论] 🔍 音频转录中未发现核心品牌。")
+                logger.info("🎤 =======================================")
+                return ""
+
+        except Exception as e:
+            logger.error(f"品牌检测的音频兜底失败: {e}")
+            logger.info("🎤 =======================================")
+            return ""
+
+    def _build_brand_detection_prompt(self) -> str:
+        """
+        构建AI-A专用的核心品牌检测prompt
         """
         try:
-            brand_prompt = self._build_atwo_detection_prompt()
-            result = self._analyze_video_file(video_path, frame_rate, brand_prompt)
-            
-            if result and 'analysis' in result:
-                # 解析品牌检测结果
-                analysis_text = result['analysis'].lower()
-                
-                # 严格检查ATWO相关标识
-                atwo_indicators = ['atwo', 'a-two', 'a2蛋白', '成分表', '配料表']
-                
-                for indicator in atwo_indicators:
-                    if indicator in analysis_text:
-                        # 进一步验证是否在奶粉罐特写场景
-                        if any(scene in analysis_text for scene in ['特写', '近景', '罐体', '包装']):
-                            logger.info(f"✅ ATWO品牌检测成功：发现 '{indicator}' 在合适场景中")
-                            return "ATWO"
-                
-                logger.info("🔍 未在合适场景中检测到ATWO标识")
-                return ""
-            
-            return ""
-            
-        except Exception as e:
-            logger.error(f"ATWO品牌检测失败: {e}")
-            return ""
+            config_manager = get_config_manager()
+            keywords_config = config_manager.get_keywords_config()
+            core_brands = keywords_config.get('ai_brand_detection', {}).get('core_brands', [])
 
-    def _build_atwo_detection_prompt(self) -> str:
-        """
-        构建AI-A专用的ATWO品牌检测prompt
-        """
-        return """🔍 你是品牌识别专家，请专门检查画面中是否有ATWO品牌标识。
+            if not core_brands:
+                logger.error("核心品牌列表(core_brands)未配置，使用默认列表进行品牌检测。")
+                core_brands = ['启赋', 'illuma', '惠氏', 'Wyeth', '蕴淳', 'A2', 'ATWO', 'HMO']
 
-**检查重点：**
-1. 奶粉罐包装上的"ATWO"字样或Logo
-2. 产品成分表或配料表中的"ATWO"标识  
-3. 包装正面的品牌名称区域
+            brand_list_str = ", ".join(core_brands)
+            return f"""🔍 你是品牌识别专家，请严格按照提供的品牌列表检查画面。
 
-**严格要求：**
-- 只有在奶粉罐特写或包装近景中清晰可见"ATWO"字样时，才确认检测到ATWO
-- 如果画面模糊、角度不佳或无法确认，请输出"未检测到"
+# **核心任务**
+你的唯一任务是识别画面中是否清晰出现了以下 **核心品牌列表** 中的任何一个品牌标识。
 
-**输出格式：**
-如果检测到ATWO：输出"检测到ATWO品牌标识"
-如果未检测到：输出"未检测到ATWO标识"
+# **核心品牌列表**
+`{brand_list_str}`
+
+# **检查重点**
+1. 奶粉罐包装上的品牌Logo或文字。
+2. 产品包装正面的品牌名称。
+3. 任何与核心品牌列表相关的清晰可见的标识。
+
+# **严格要求**
+- **只识别列表中的品牌**。如果画面中出现了其他品牌，忽略它们。
+- 如果画面模糊、角度不佳或无法100%确认，请不要输出任何品牌。
+- 如果没有在画面中找到任何核心品牌，请直接输出 "无"。
+
+# **输出格式**
+- 如果检测到一个或多个品牌，请用逗号分隔返回，例如: "启赋, illuma"
+- 如果未检测到任何核心品牌，请输出: "无"
 """
+        except Exception as e:
+            logger.error(f"构建品牌检测prompt失败: {e}")
+            # Return a non-functional prompt
+            return "请识别视频中的品牌"
