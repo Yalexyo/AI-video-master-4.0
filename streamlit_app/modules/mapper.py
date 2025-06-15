@@ -84,7 +84,10 @@ class VideoSegmentMapper:
             user_content = "\n".join(user_content_parts)
             user_content += "\n\n请根据以上信息进行模块分类，只回答模块名称。"
             
-            response = self.deepseek_analyzer.analyze_text(system_prompt, user_content)
+            response = self.deepseek_analyzer._chat_completion([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ])
             
             if response and "choices" in response and len(response["choices"]) > 0:
                 content = response["choices"][0]["message"]["content"].strip()
